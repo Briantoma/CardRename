@@ -29,6 +29,7 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
     @Published var enabled: Bool { didSet { store.set(enabled, forKey: "enabled") } }
     @Published var defaultNames: String { didSet { store.set(defaultNames, forKey: "defaultNames") } }
     @Published var askWhenNoReel: Bool { didSet { store.set(askWhenNoReel, forKey: "askWhenNoReel") } }
+    @Published var showMenuBarIcon: Bool { didSet { store.set(showMenuBarIcon, forKey: "showMenuBarIcon") } }
     @Published private(set) var recent: [RenameEntry] = []
     @Published private(set) var mountedNames = Set<String>()
     @Published private(set) var busy = false
@@ -45,6 +46,7 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
         enabled = store.object(forKey: "enabled") as? Bool ?? true
         defaultNames = store.string(forKey: "defaultNames") ?? "UNTITLED, NO NAME, NONAME, DJI"
         askWhenNoReel = store.object(forKey: "askWhenNoReel") as? Bool ?? true
+        showMenuBarIcon = store.object(forKey: "showMenuBarIcon") as? Bool ?? true
         super.init()
         loadLog()
         refreshMounted()

@@ -16,8 +16,10 @@ Only cards still carrying a default name (UNTITLED, NO NAME, NONAME, DJI, editab
 - **Rename cards automatically**: on/off switch. The icon is filled when on.
 - **Rename cards now**: rename the cards already mounted.
 - **Recent renames**: Undo button while the card is mounted.
-- **Settings**: default card names, ask for a name when there is no reel ID, open at login.
+- **Settings**: default card names, ask for a name when there is no reel ID, open at login, show icon in menu bar.
 - **Open log**: `~/Library/Logs/CardRename.log` (same format as `rename_card.sh`).
+
+The same panel opens in a window on first launch, and whenever the app is opened again from Applications. Useful when the menu bar icon is hidden: behind the notch on a full menu bar, switched off in System Settings > Menu Bar, or tucked away by Bartender or Ice.
 
 Each rename posts a notification with an **Undo** button (hover the banner, or set Card Rename to "Alerts" in System Settings > Notifications to keep the button visible). After an undo, the automation leaves that card alone until it is reformatted.
 
