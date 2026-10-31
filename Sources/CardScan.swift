@@ -1,0 +1,184 @@
+import Foundation
+
+/// Card naming rules, without any UI: what name a mounted card should get.
+///
+///   Reel-ID cameras (name taken from the clips, any subfolder):
+///     Sony XDCAM / ARRI / Canon / DJI Ronin   D902C001_260916JN.MXF      -> D902
+///     RED                                     A001_C001_0916AB_001.R3D   -> A001
+///     Blackmagic                              A001_09161234_C001.braw    -> A001
+///   Cameras without a reel ID (Sony C0001.MP4, DJI, GoPro, Lumix, DCIM...):
+///     MODEL_YYMMDD from the oldest clip, e.g. FX3_260916, DJI_260916.
+enum CardScan {
+
+    static let mediaExtensions: Set<String> = [
+        "mxf", "mp4", "mov", "braw", "r3d", "ari", "arx", "crm", "mts", "m2ts", "avi", "mkv", "insv", "360",
+    ]
+    static let cardFolders = ["XDROOT", "PRIVATE", "DCIM", "CONTENTS", "CLIPS001"]
+    static let maxDepth = 5
+
+    enum Proposal: Equatable {
+        case reel(String)                    // one reel ID found, ready to use
+        case noReel(suggestion: String)      // clips without reel ID, suggested MODEL_YYMMDD
+        case multipleReels([String])         // mixed card, never renamed
+        case noClips
+        case unreadable                      // macOS refused access to the card
+    }
+
+    // MARK: - Analysis
+
+    static func analyze(root: URL, maxLength: Int) -> Proposal {
+        guard (try? FileManager.default.contentsOfDirectory(atPath: root.path)) != nil else { return .unreadable }
+
+        let files = mediaFiles(in: root)
+        if files.isEmpty { return .noClips }
+
+        let reels = reelIDs(in: files.map { $0.lastPathComponent })
+        switch reels.count {
+        case 1:  return .reel(cleanName(reels[0], maxLength: maxLength))
+        case 0:  break
+        default: return .multipleReels(reels)
+        }
+
+        let tag = cameraTag(root: root, files: files)
+        let date = oldestDate(of: files) ?? ""
+        return .noReel(suggestion: cleanName("\(tag)_\(date)", maxLength: maxLength))
+    }
+
+    /// Video files below `root`, hidden folders and ._ files skipped.
+    static func mediaFiles(in root: URL, maxDepth: Int = maxDepth, limit: Int = .max) -> [URL] {
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .contentModificationDateKey]
+        guard let walker = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles],
+            errorHandler: { _, _ in true })
+        else { return [] }
+
+        var found: [URL] = []
+        for case let url as URL in walker {
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey])
+            if values?.isDirectory == true {
+                if walker.level >= maxDepth { walker.skipDescendants() }
+                continue
+            }
+            guard values?.isRegularFile == true,
+                  mediaExtensions.contains(url.pathExtension.lowercased()) else { continue }
+            found.append(url)
+            if found.count >= limit { break }
+        }
+        return found
+    }
+
+    private static let reelPatterns = [
+        try! Regex("^([A-Z0-9]{4})C[0-9]{3,4}_"),       // Sony XDCAM, ARRI, Canon, DJI Ronin
+        try! Regex("^([A-Z][0-9]{3})_C[0-9]{3}_"),      // RED
+        try! Regex("^([A-Z][0-9]{3})_[0-9]{8}_C[0-9]{3}"), // Blackmagic
+    ]
+
+    /// Unique reel IDs found in clip names, sorted.
+    static func reelIDs(in names: [String]) -> [String] {
+        var reels = Set<String>()
+        for name in names {
+            let upper = name.uppercased()
+            for pattern in reelPatterns {
+                if let match = try? pattern.prefixMatch(in: upper),
+                   let reel = match.output[1].substring {
+                    reels.insert(String(reel))
+                    break
+                }
+            }
+        }
+        return reels.sorted()
+    }
+
+    /// Short camera tag for cards without a reel ID.
+    static func cameraTag(root: URL, files: [URL]) -> String {
+        let fm = FileManager.default
+
+        // Sony XAVC S / XAVC HS: model in the clip XML (<Device ... modelName="ILME-FX3">)
+        let m4 = root.appendingPathComponent("PRIVATE/M4ROOT")
+        if fm.fileExists(atPath: m4.path) {
+            let clipDir = m4.appendingPathComponent("Clip")
+            let xmls = (try? fm.contentsOfDirectory(at: clipDir, includingPropertiesForKeys: nil)) ?? []
+            for xml in xmls where xml.pathExtension.lowercased() == "xml" {
+                guard let text = try? String(contentsOf: xml, encoding: .utf8),
+                      let match = try? Regex("modelName=\"([^\"]+)\"").firstMatch(in: text),
+                      let model = match.output[1].substring else { continue }
+                return String(model).replacing(try! Regex("^[A-Za-z]+-"), with: "")
+            }
+            return "SONY"
+        }
+
+        if files.contains(where: { $0.lastPathComponent.uppercased().hasPrefix("DJI_") }) { return "DJI" }
+        if fm.fileExists(atPath: root.appendingPathComponent("PRIVATE/PANA_GRP").path) { return "LUMIX" }
+
+        // DCIM/100GOPRO, DCIM/100CANON, DCIM/100_PANA... -> GOPRO, CANON, PANA
+        let dcim = root.appendingPathComponent("DCIM")
+        let folders = ((try? fm.contentsOfDirectory(atPath: dcim.path)) ?? []).sorted()
+        for folder in folders where folder.prefix(3).allSatisfy(\.isNumber) && folder.count > 3 {
+            let tag = folder.dropFirst(3).filter { $0.isLetter || $0.isNumber }
+            if !tag.isEmpty && tag.uppercased() != "MEDIA" { return String(tag) }
+        }
+
+        return "CARD"
+    }
+
+    /// Date of the oldest clip, YYMMDD.
+    static func oldestDate(of files: [URL]) -> String? {
+        let dates = files.compactMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
+        guard let oldest = dates.min() else { return nil }
+        let format = DateFormatter()
+        format.dateFormat = "yyMMdd"
+        return format.string(from: oldest)
+    }
+
+    // MARK: - Volume names
+
+    /// Keep A-Z 0-9 _ - and fit the file system label limit.
+    static func cleanName(_ raw: String, maxLength: Int) -> String {
+        var name = String(raw.uppercased().unicodeScalars.filter {
+            ("A"..."Z").contains($0) || ("0"..."9").contains($0) || $0 == "_" || $0 == "-"
+        }.map(Character.init))
+        if name.count > maxLength { name.removeAll { $0 == "_" || $0 == "-" } }
+        return String(name.prefix(maxLength))
+    }
+
+    /// Volume label limit for a file system type as reported by statfs.
+    static func maxLabelLength(fsType: String) -> Int {
+        switch fsType.lowercased() {
+        case "exfat":       return 15
+        case "apfs", "hfs": return 27
+        default:            return 11   // msdos (FAT32) or unknown
+        }
+    }
+
+    /// "UNTITLED", "UNTITLED 2", "DJI1"... for the list "UNTITLED, NO NAME, DJI".
+    static func isDefaultName(_ name: String, defaults: [String]) -> Bool {
+        let alternatives = defaults
+            .map { $0.trimmingCharacters(in: .whitespaces).uppercased() }
+            .filter { !$0.isEmpty }
+            .map { NSRegularExpression.escapedPattern(for: $0) }
+        guard !alternatives.isEmpty,
+              let pattern = try? Regex("^(\(alternatives.joined(separator: "|"))) ?[0-9]{0,2}$") else { return false }
+        return (try? pattern.wholeMatch(in: name.uppercased())) != nil
+    }
+
+    /// Card folders, or reel-named clips near the root (RED, ARRI, Blackmagic, Ronin).
+    static func looksLikeCard(_ root: URL) -> Bool {
+        let fm = FileManager.default
+        if cardFolders.contains(where: { fm.fileExists(atPath: root.appendingPathComponent($0).path) }) { return true }
+        let names = mediaFiles(in: root, maxDepth: 3, limit: 50).map(\.lastPathComponent)
+        return !reelIDs(in: names).isEmpty
+    }
+}
+
+/// What statfs knows about a mount point.
+struct VolumeInfo {
+    let device: String   // /dev/disk4s1
+    let fsType: String   // exfat, msdos, apfs...
+
+    init?(path: String) {
+        var stats = statfs()
+        guard statfs(path, &stats) == 0 else { return nil }
+        device = withUnsafeBytes(of: stats.f_mntfromname) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
+        fsType = withUnsafeBytes(of: stats.f_fstypename) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
+    }
+}

@@ -1,0 +1,350 @@
+import AppKit
+import ServiceManagement
+import UserNotifications
+
+struct RenameEntry: Identifiable, Equatable {
+    let date: Date
+    let old: String
+    let new: String
+    let uuid: String
+    var undone = false
+
+    var id: String { "\(date.timeIntervalSince1970)-\(new)" }
+
+    var timeLabel: String {
+        let format = DateFormatter()
+        format.dateFormat = Calendar.current.isDateInToday(date) ? "HH:mm" : "MMM d, HH:mm"
+        return format.string(from: date)
+    }
+}
+
+/// Watches mounts, renames cards, keeps the history and handles undo.
+@MainActor
+final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
+
+    static let shared = Engine()
+
+    private let store = UserDefaults.standard
+
+    @Published var enabled: Bool { didSet { store.set(enabled, forKey: "enabled") } }
+    @Published var defaultNames: String { didSet { store.set(defaultNames, forKey: "defaultNames") } }
+    @Published var askWhenNoReel: Bool { didSet { store.set(askWhenNoReel, forKey: "askWhenNoReel") } }
+    @Published private(set) var recent: [RenameEntry] = []
+    @Published private(set) var mountedNames = Set<String>()
+    @Published private(set) var busy = false
+
+    let logURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/CardRename.log")
+    private let ignoreURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/CardRename/undone.txt")
+    private var inProgress = Set<String>()
+    private var notificationsAllowed = false
+
+    private var defaultNameList: [String] { defaultNames.split(separator: ",").map(String.init) }
+
+    override init() {
+        enabled = store.object(forKey: "enabled") as? Bool ?? true
+        defaultNames = store.string(forKey: "defaultNames") ?? "UNTITLED, NO NAME, NONAME, DJI"
+        askWhenNoReel = store.object(forKey: "askWhenNoReel") as? Bool ?? true
+        super.init()
+        loadLog()
+        refreshMounted()
+        setUpNotifications()
+
+        let center = NSWorkspace.shared.notificationCenter
+        center.addObserver(forName: NSWorkspace.didMountNotification, object: nil, queue: .main) { [weak self] note in
+            let url = note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL
+            Task { @MainActor in
+                self?.refreshMounted()
+                if let url, self?.enabled == true { await self?.process(url, auto: true) }
+            }
+        }
+        for name in [NSWorkspace.didUnmountNotification, NSWorkspace.didRenameVolumeNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.refreshMounted() }
+            }
+        }
+    }
+
+    // MARK: - Renaming
+
+    /// Rename every mounted card that still has a default name.
+    func renameNow() async {
+        let volumes = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: nil, options: [.skipHiddenVolumes]) ?? []
+        let cards = volumes.filter {
+            $0.path.hasPrefix("/Volumes/") && CardScan.isDefaultName($0.lastPathComponent, defaults: defaultNameList)
+        }
+        if cards.isEmpty {
+            alert("No card to rename", "No mounted volume has a default name (\(defaultNames)).")
+            return
+        }
+        for card in cards { await process(card, auto: false) }
+    }
+
+    /// `auto`: started by a mount, stay silent unless a card is renamed or something is wrong.
+    func process(_ volume: URL, auto: Bool) async {
+        let path = volume.path
+        let current = volume.lastPathComponent
+        guard path.hasPrefix("/Volumes/"),
+              CardScan.isDefaultName(current, defaults: defaultNameList),
+              !inProgress.contains(path),
+              let info = VolumeInfo(path: path) else { return }
+
+        let uuid = (try? volume.resourceValues(forKeys: [.volumeUUIDStringKey]))?.volumeUUIDString ?? ""
+        if auto && ignoredUUIDs().contains(uuid) { return }   // renaming was undone on this card
+
+        inProgress.insert(path)
+        defer { inProgress.remove(path) }
+
+        let maxLength = CardScan.maxLabelLength(fsType: info.fsType)
+        busy = true
+        let (isCard, proposal) = await Task.detached {
+            let proposal = CardScan.analyze(root: volume, maxLength: maxLength)
+            return (proposal == .unreadable || CardScan.looksLikeCard(volume), proposal)
+        }.value
+        busy = false
+
+        if auto && !isCard { return }   // a USB stick or a disk image, not a camera card
+
+        var newName: String
+        switch proposal {
+        case .unreadable:
+            alert("Cannot read \(current)",
+                  "macOS does not let Card Rename read this card.\nIn System Settings > Privacy & Security > Files and Folders, allow Removable Volumes for Card Rename, then mount the card again.")
+            return
+        case .noClips:
+            if !auto { alert("Nothing to rename", "No video clip found on \(current).") }
+            return
+        case .multipleReels(let reels):
+            alert("\(current) holds more than one reel ID",
+                  "\(reels.joined(separator: " "))\nNothing renamed. Check the card before offloading.")
+            return
+        case .reel(let reel):
+            newName = reel
+        case .noReel(let suggestion):
+            if askWhenNoReel {
+                guard let answer = askName(current: current, suggestion: suggestion, maxLength: maxLength) else { return }
+                newName = CardScan.cleanName(answer, maxLength: maxLength)
+            } else {
+                newName = suggestion
+            }
+        }
+
+        if newName.isEmpty { alert("Empty name", "Nothing renamed on \(current)."); return }
+        if newName == current { return }
+
+        let result = await diskutilRename(info.device, to: newName)
+        guard result.ok else {
+            alert("Rename failed for \(current)", result.output)
+            return
+        }
+
+        let entry = RenameEntry(date: Date(), old: current, new: newName, uuid: uuid)
+        recent.insert(entry, at: 0)
+        appendLog(entry, undo: false)
+        notifyRenamed(entry)
+    }
+
+    // MARK: - Undo
+
+    func isMounted(_ entry: RenameEntry) -> Bool { mountedNames.contains(entry.new) }
+
+    func undo(id: String) async {
+        guard let entry = recent.first(where: { $0.id == id }) else { return }
+        await undo(entry)
+    }
+
+    /// Give the card its old name back and keep the automation off it until it is reformatted.
+    func undo(_ entry: RenameEntry) async {
+        guard let index = recent.firstIndex(of: entry), !entry.undone else { return }
+        let volume = URL(fileURLWithPath: "/Volumes/\(entry.new)")
+        let uuid = (try? volume.resourceValues(forKeys: [.volumeUUIDStringKey]))?.volumeUUIDString
+        guard let uuid, entry.uuid.isEmpty || uuid == entry.uuid else {
+            alert("Cannot undo", "\(entry.new) is not mounted any more.")
+            return
+        }
+
+        addIgnoredUUID(uuid)
+        let result = await diskutilRename(volume.path, to: entry.old)
+        guard result.ok else {
+            alert("Undo failed for \(entry.new)", result.output)
+            return
+        }
+        recent[index].undone = true
+        appendLog(entry, undo: true)
+        notify("Rename undone", "\(entry.new) is \(entry.old) again")
+    }
+
+    // MARK: - Settings
+
+    var openAtLogin: Bool { SMAppService.mainApp.status == .enabled }
+
+    func setOpenAtLogin(_ on: Bool) {
+        do {
+            if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+        } catch {
+            alert("Open at login", "macOS refused: \(error.localizedDescription)\nMove Card Rename to /Applications and try again.")
+        }
+        objectWillChange.send()
+    }
+
+    func openLog() {
+        if !FileManager.default.fileExists(atPath: logURL.path) {
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        }
+        NSWorkspace.shared.open(logURL)
+    }
+
+    // MARK: - Helpers
+
+    private func refreshMounted() {
+        let volumes = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: nil, options: [.skipHiddenVolumes]) ?? []
+        mountedNames = Set(volumes.filter { $0.path.hasPrefix("/Volumes/") }.map(\.lastPathComponent))
+    }
+
+    private func diskutilRename(_ target: String, to name: String) async -> (ok: Bool, output: String) {
+        await Task.detached {
+            let task = Process()
+            let pipe = Pipe()
+            task.executableURL = URL(fileURLWithPath: "/usr/sbin/diskutil")
+            task.arguments = ["rename", target, name]
+            task.standardOutput = pipe
+            task.standardError = pipe
+            do { try task.run() } catch { return (false, error.localizedDescription) }
+            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            task.waitUntilExit()
+            return (task.terminationStatus == 0, output)
+        }.value
+    }
+
+    private func askName(current: String, suggestion: String, maxLength: Int) -> String? {
+        let alert = NSAlert()
+        alert.messageText = "No reel ID in the clip names on \(current)"
+        alert.informativeText = "Name for this card (max \(maxLength) characters):"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.stringValue = suggestion
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Skip")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.window.initialFirstResponder = field
+        return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
+    }
+
+    private func alert(_ title: String, _ text: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        alert.alertStyle = .warning
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    // MARK: - Log (same format as rename_card.sh: date, old, new, UUID, [undo])
+
+    private static let logDate: DateFormatter = {
+        let format = DateFormatter()
+        format.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return format
+    }()
+
+    private func loadLog() {
+        guard let text = try? String(contentsOf: logURL, encoding: .utf8) else { return }
+        var entries: [RenameEntry] = []
+        for line in text.split(separator: "\n") {
+            let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard f.count >= 3, let date = Self.logDate.date(from: f[0]) else { continue }
+            let uuid = f.count > 3 ? f[3] : ""
+            if f.count > 4 && f[4] == "undo" {
+                // undo line: old and new are swapped
+                if let i = entries.lastIndex(where: { $0.new == f[1] && $0.old == f[2] && !$0.undone }) {
+                    entries[i].undone = true
+                }
+            } else {
+                entries.append(RenameEntry(date: date, old: f[1], new: f[2], uuid: uuid))
+            }
+        }
+        recent = Array(entries.suffix(20).reversed())
+    }
+
+    private func appendLog(_ entry: RenameEntry, undo: Bool) {
+        let fields = undo
+            ? [Self.logDate.string(from: Date()), entry.new, entry.old, entry.uuid, "undo"]
+            : [Self.logDate.string(from: entry.date), entry.old, entry.new, entry.uuid]
+        let line = fields.joined(separator: "\t") + "\n"
+        try? FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let handle = try? FileHandle(forWritingTo: logURL) {
+            handle.seekToEndOfFile()
+            handle.write(Data(line.utf8))
+            try? handle.close()
+        } else {
+            try? line.write(to: logURL, atomically: true, encoding: .utf8)
+        }
+    }
+
+    private func ignoredUUIDs() -> Set<String> {
+        let text = (try? String(contentsOf: ignoreURL, encoding: .utf8)) ?? ""
+        return Set(text.split(separator: "\n").map(String.init))
+    }
+
+    private func addIgnoredUUID(_ uuid: String) {
+        guard !uuid.isEmpty, !ignoredUUIDs().contains(uuid) else { return }
+        try? FileManager.default.createDirectory(at: ignoreURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let text = ((try? String(contentsOf: ignoreURL, encoding: .utf8)) ?? "") + uuid + "\n"
+        try? text.write(to: ignoreURL, atomically: true, encoding: .utf8)
+    }
+
+    // MARK: - Notifications
+
+    private func setUpNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        let undo = UNNotificationAction(identifier: "UNDO", title: "Undo", options: [])
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: "RENAMED", actions: [undo], intentIdentifiers: [], options: []),
+        ])
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            Task { @MainActor in self.notificationsAllowed = granted }
+        }
+    }
+
+    private func notifyRenamed(_ entry: RenameEntry) {
+        guard notificationsAllowed else {
+            // no notifications: ask right away instead
+            let alert = NSAlert()
+            alert.messageText = "Card \(entry.old) renamed \(entry.new)"
+            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: "Undo")
+            NSApp.activate(ignoringOtherApps: true)
+            if alert.runModal() == .alertSecondButtonReturn { Task { await undo(entry) } }
+            return
+        }
+        notify("Card renamed \(entry.new)", "\(entry.old) is now \(entry.new)", undoID: entry.id)
+    }
+
+    private func notify(_ title: String, _ body: String, undoID: String? = nil) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        if let undoID {
+            content.categoryIdentifier = "RENAMED"
+            content.userInfo = ["entry": undoID]
+        }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
+        let id = response.notification.request.content.userInfo["entry"] as? String
+        if response.actionIdentifier == "UNDO", let id {
+            Task { @MainActor in await Engine.shared.undo(id: id) }
+        }
+        completionHandler()
+    }
+}
