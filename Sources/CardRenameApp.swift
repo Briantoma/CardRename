@@ -202,7 +202,7 @@ struct PanelView: View {
                     TextField("UNTITLED, NO NAME, DJI", text: $engine.defaultNames)
                     Toggle("Ask for a name when clips have no reel ID", isOn: $engine.askWhenNoReel)
                     Toggle("Name cards without reel ID after the labroll", isOn: $engine.labrollForNoReel)
-                    Text("A001_GOPRO from the Labroll window's next labroll and Cam ID; the card's clips are listed there once it is ready.")
+                    Text("A001_GOPRO from the Labroll window's next labroll, Cam ID and naming scheme; the card's clips are listed there once it is ready.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Toggle("Eject the card after renaming", isOn: $engine.ejectAfterRename)

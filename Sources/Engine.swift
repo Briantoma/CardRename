@@ -106,14 +106,19 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
         defer { inProgress.remove(path) }
 
         let maxLength = CardScan.maxLabelLength(fsType: info.fsType)
+        let scheme = LabrollStore.shared.cardScheme
+        let needsClipDate = labrollForNoReel && scheme.dateSource == .recording && scheme.uses("date")
         busy = true
-        let (isCard, proposal, camera) = await Task.detached {
+        let (isCard, proposal, camera, oldestClip) = await Task.detached {
             let proposal = CardScan.analyze(root: volume, maxLength: maxLength)
             var camera = ""
+            var oldestClip: Date?
             if case .noReel = proposal {
-                camera = CardScan.cameraTag(root: volume, files: CardScan.mediaFiles(in: volume))
+                let files = CardScan.mediaFiles(in: volume)
+                camera = CardScan.cameraTag(root: volume, files: files)
+                if needsClipDate { oldestClip = files.compactMap(Labroll.recordingDate).min() }
             }
-            return (proposal == .unreadable || CardScan.looksLikeCard(volume), proposal, camera)
+            return (proposal == .unreadable || CardScan.looksLikeCard(volume), proposal, camera, oldestClip)
         }.value
         busy = false
 
@@ -141,7 +146,9 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
             if labrollForNoReel && !labroll.isEmpty {
                 let camID = LabrollStore.shared.camID.trimmingCharacters(in: .whitespaces)
                 let card = (labroll: labroll, camera: camID.isEmpty ? camera : camID)
-                suggestion = Labroll.cardName(labroll: card.labroll, camera: card.camera, date: Date(), maxLength: maxLength)
+                let values = NameScheme.Values(labroll: card.labroll, date: oldestClip ?? Date(), cam: card.camera,
+                                               random: NameScheme.randomCharacters())
+                suggestion = scheme.cardName(values, maxLength: maxLength)
                 labrollCard = card
             }
             if askWhenNoReel {

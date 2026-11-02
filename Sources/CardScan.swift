@@ -142,11 +142,11 @@ enum CardScan {
     }
 
     /// Volume label limit for a file system type as reported by statfs.
+    /// exFAT labels hold 11 characters, like FAT32: diskutil refuses a 12th.
     static func maxLabelLength(fsType: String) -> Int {
         switch fsType.lowercased() {
-        case "exfat":       return 15
         case "apfs", "hfs": return 27
-        default:            return 11   // msdos (FAT32) or unknown
+        default:            return 11   // exfat, msdos (FAT32) or unknown
         }
     }
 

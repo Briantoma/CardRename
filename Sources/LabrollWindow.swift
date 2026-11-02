@@ -9,6 +9,8 @@ struct LabrollClip: Identifiable {
     var url: URL
     let originalName: String
     let size: Int64
+    let recorded: Date?                       // MP4/MOV header date, else file creation date
+    let random = NameScheme.randomCharacters()
     var state = State.waiting
     var newName = ""
 }
@@ -45,6 +47,8 @@ final class LabrollStore: ObservableObject {
     @Published var destination: String { didSet { store.set(destination, forKey: "labrollDestination") } }
     @Published var renameOnly: Bool { didSet { store.set(renameOnly, forKey: "labrollRenameOnly") } }
     @Published var ignoreMXF: Bool { didSet { store.set(ignoreMXF, forKey: "labrollIgnoreMXF") } }
+    @Published var clipScheme: NameScheme { didSet { save(clipScheme, "clipScheme") } }
+    @Published var cardScheme: NameScheme { didSet { save(cardScheme, "cardScheme") } }
     @Published var rolls: [LabrollRoll] = []
     @Published private(set) var running = false
     @Published private(set) var progress = 0.0
@@ -65,6 +69,16 @@ final class LabrollStore: ObservableObject {
         destination = store.string(forKey: "labrollDestination") ?? ""
         renameOnly = store.bool(forKey: "labrollRenameOnly")
         ignoreMXF = store.object(forKey: "labrollIgnoreMXF") as? Bool ?? true
+        clipScheme = Self.load("clipScheme") ?? .clipDefault
+        cardScheme = Self.load("cardScheme") ?? .cardDefault
+    }
+
+    private static func load(_ key: String) -> NameScheme? {
+        UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(NameScheme.self, from: $0) }
+    }
+
+    private func save(_ scheme: NameScheme, _ key: String) {
+        store.set(try? JSONEncoder().encode(scheme), forKey: key)
     }
 
     /// Next labroll for a new card or drop; the counter moves on.
@@ -87,7 +101,8 @@ final class LabrollStore: ObservableObject {
             let found = Labroll.clips(in: urls, ignoreMXF: ignoreMXF)
             let clips = found.map { url in
                 LabrollClip(url: url, originalName: url.lastPathComponent,
-                            size: Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0))
+                            size: Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0),
+                            recorded: Labroll.recordingDate(url))
             }
             await MainActor.run { self.added(clips, source: source, labroll: labroll, camID: camID) }
         }
@@ -161,8 +176,15 @@ final class LabrollStore: ObservableObject {
     func preview(_ roll: LabrollRoll, _ clip: LabrollClip) -> String {
         if !clip.newName.isEmpty { return clip.newName }
         let index = (roll.clips.firstIndex { $0.id == clip.id } ?? 0) + 1
-        return Labroll.clipName(labroll: roll.labroll, index: index, date: Date(),
-                                camID: roll.camID, extension: clip.url.pathExtension)
+        return Self.clipName(clipScheme, roll, clip, index: index, today: Date())
+    }
+
+    nonisolated static func clipName(_ scheme: NameScheme, _ roll: LabrollRoll, _ clip: LabrollClip,
+                                     index: Int, today: Date) -> String {
+        let date = scheme.dateSource == .recording ? clip.recorded ?? today : today
+        let values = NameScheme.Values(labroll: roll.labroll, clip: index, date: date, cam: roll.camID,
+                                       name: (clip.originalName as NSString).deletingPathExtension, random: clip.random)
+        return scheme.clipName(values, extension: clip.url.pathExtension)
     }
 
     var canStart: Bool { !running && loading == 0 && rolls.contains { !$0.pending.isEmpty } }
@@ -195,6 +217,7 @@ final class LabrollStore: ObservableObject {
         let jobs = rolls
         let flag = cancel
         let logURL = clipsLogURL
+        let scheme = clipScheme
 
         Task.detached {
             let today = Date()
@@ -205,8 +228,7 @@ final class LabrollStore: ObservableObject {
                 let start = Date()
                 for (i, clip) in roll.clips.enumerated() where clip.state != .done {
                     if flag.isSet { break }
-                    let newName = Labroll.clipName(labroll: roll.labroll, index: i + 1, date: today,
-                                                   camID: roll.camID, extension: clip.url.pathExtension)
+                    let newName = Self.clipName(scheme, roll, clip, index: i + 1, today: today)
                     await self.update(roll.id, clip.id) { $0.state = .working; $0.newName = newName }
                     do {
                         if renameOnly {
@@ -298,6 +320,20 @@ struct LabrollView: View {
                 Toggle("Ignore MXF", isOn: $store.ignoreMXF)
             }
 
+            DisclosureGroup("Naming scheme") {
+                VStack(alignment: .leading, spacing: 10) {
+                    SchemeEditor(title: "Clips", scheme: $store.clipScheme, standard: .clipDefault,
+                                 forClips: true, example: clipExample)
+                    SchemeEditor(title: "Cards", scheme: $store.cardScheme, standard: .cardDefault,
+                                 forClips: false, example: cardExample)
+                    Text("Cards use their scheme when they have no reel ID and \"Name cards without reel ID after the labroll\" is on. Card labels keep A-Z 0-9 _ -; when too long, YYYY becomes YY, then the date, the camera and the original name are left out. Random characters are drawn once per clip or card.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 6)
+            }
+            .disabled(store.running)
+
             Picker("Mode", selection: $store.renameOnly) {
                 Text("Copy + rename").tag(false)
                 Text("Rename only, on the card").tag(true)
@@ -326,7 +362,7 @@ struct LabrollView: View {
                 }
                 .padding(8)
             }
-            .frame(minHeight: 260)
+            .frame(minHeight: 200)
             .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
             .overlay {
                 if store.rolls.isEmpty {
@@ -356,6 +392,97 @@ struct LabrollView: View {
         }
         .padding(14)
         .frame(minWidth: 600, minHeight: 500)
+    }
+
+    private var exampleValues: NameScheme.Values {
+        let cam = store.camID.trimmingCharacters(in: .whitespaces)
+        return .init(labroll: store.nextLabroll, clip: 1, date: Date(), cam: cam.isEmpty ? "GOPRO" : cam,
+                     name: "GX010001", random: "X7K2R9P4")
+    }
+
+    private func clipExample(_ scheme: NameScheme) -> String {
+        "GX010001.MP4  →  " + scheme.clipName(exampleValues, extension: "MP4")
+    }
+
+    private func cardExample(_ scheme: NameScheme) -> String {
+        [("FAT32 / exFAT", 11), ("APFS", 27)]
+            .map { "\($0.0) \(scheme.cardName(exampleValues, maxLength: $0.1))" }
+            .joined(separator: "    ")
+    }
+}
+
+/// Template field, token buttons (date format, clip digits and random length picked from their menus),
+/// date source and a live example.
+struct SchemeEditor: View {
+    let title: String
+    @Binding var scheme: NameScheme
+    let standard: NameScheme
+    let forClips: Bool
+    let example: (NameScheme) -> String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(title).bold().frame(width: 44, alignment: .leading)
+                TextField(standard.template, text: $scheme.template)
+                    .font(.system(.body, design: .monospaced))
+                Picker("Date from", selection: $scheme.dateSource) {
+                    Text(forClips ? "Day of copy" : "Day of rename").tag(NameScheme.DateSource.today)
+                    Text(forClips ? "Recording date" : "Oldest clip").tag(NameScheme.DateSource.recording)
+                }
+                .fixedSize()
+                Button("Reset") { scheme = standard }
+                    .disabled(scheme == standard)
+            }
+            HStack(spacing: 8) {
+                Text("Add").foregroundStyle(.secondary).frame(width: 44, alignment: .leading)
+                Button("Labroll") { add("{labroll}") }
+                if forClips {
+                    Menu("Clip #") {
+                        ForEach(2...4, id: \.self) { digits in
+                            Button("\(digits) digits   \(String(format: "%0\(digits)d", 1))") { add("{clip:\(digits)}") }
+                        }
+                    }
+                    .fixedSize()
+                }
+                Menu("Date") {
+                    ForEach(NameScheme.dateFormats, id: \.self) { format in
+                        Button("\(format)   \(NameScheme.date(Date(), format: format))") { add("{date:\(format)}") }
+                    }
+                }
+                .fixedSize()
+                Button("Cam ID") { add("{cam}") }
+                if forClips { Button("Original name") { add("{name}") } }
+                Menu("Random") {
+                    ForEach([2, 3, 4, 5, 6, 8], id: \.self) { count in
+                        Button("\(count) characters   \(String("X7K2R9P4".prefix(count)))") { add("{random:\(count)}") }
+                    }
+                }
+                .fixedSize()
+            }
+            .controlSize(.small)
+            Text(example(scheme))
+                .font(.system(.caption, design: .monospaced))
+                .padding(.leading, 52)
+            ForEach(warnings, id: \.self) { warning in
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange)
+                    .padding(.leading, 52)
+            }
+        }
+    }
+
+    /// Appended at the end, with a "_" after a previous token ({labroll}_{cam}, but {labroll}C{clip:3}).
+    private func add(_ token: String) {
+        scheme.template += (scheme.template.hasSuffix("}") ? "_" : "") + token
+    }
+
+    private var warnings: [String] {
+        var result = scheme.unknownTokens.map { "\($0) is not a token, kept as typed." }
+        if forClips && !["clip", "name", "random"].contains(where: scheme.uses) {
+            result.append("Without Clip #, Original name or Random, the clips of a card get the same name.")
+        }
+        return result
     }
 }
 
@@ -389,8 +516,8 @@ struct RollView: View {
                 ForEach(roll.clips) { clip in
                     GridRow {
                         icon(clip.state)
-                        Text(clip.originalName).foregroundStyle(.secondary)
-                        Text(store.preview(roll, clip))
+                        Text(clip.originalName).foregroundStyle(.secondary).fixedSize()
+                        Text(store.preview(roll, clip)).fixedSize()
                         Text(ByteCountFormatter.string(fromByteCount: clip.size, countStyle: .file))
                             .font(.caption).foregroundStyle(.tertiary)
                     }

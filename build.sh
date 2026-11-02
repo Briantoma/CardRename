@@ -9,7 +9,7 @@ cd "$(dirname "$0")"
 
 if [ "${1:-}" = "test" ]; then
   mkdir -p build
-  swiftc -swift-version 5 Sources/CardScan.swift Sources/Labroll.swift Sources/XXHash64.swift Tests/main.swift -o build/tests
+  swiftc -swift-version 5 Sources/CardScan.swift Sources/Labroll.swift Sources/NameScheme.swift Sources/XXHash64.swift Tests/main.swift -o build/tests
   ./build/tests
   exit
 fi

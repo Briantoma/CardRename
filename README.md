@@ -9,7 +9,7 @@ Menu bar app that renames camera cards after the reel ID found in their clip nam
 | Blackmagic | `A007_09161234_C001.braw` | `A007` |
 | No reel ID (Sony `C0001.MP4`, DJI, GoPro, Lumix, DCIM) | | Next labroll, e.g. `A001_GOPRO`, confirmed in a dialog (see Labroll) |
 
-Only cards still carrying a default name (UNTITLED, NO NAME, NONAME, DJI, editable in Settings) are renamed. A card with more than one reel ID is never renamed, an alert says so. Names are cut to the file system limit (FAT32 11 characters, exFAT 15).
+Only cards still carrying a default name (UNTITLED, NO NAME, NONAME, DJI, editable in Settings) are renamed. A card with more than one reel ID is never renamed, an alert says so. Names are cut to the file system limit (FAT32 and exFAT 11 characters, APFS 27).
 
 ## Menu
 
@@ -20,7 +20,7 @@ Only cards still carrying a default name (UNTITLED, NO NAME, NONAME, DJI, editab
 - **Settings**: default card names, ask for a name when there is no reel ID, name cards without reel ID after the labroll, eject the card after renaming, open at login, show icon in menu bar.
 - **Open log**: `~/Library/Logs/CardRename.log` (same format as `rename_card.sh`).
 
-The same panel opens in a window on first launch, and whenever the app is opened again from Applications. Useful when the menu bar icon is hidden: behind the notch on a full menu bar, switched off in System Settings > Menu Bar, or tucked away by Bartender or Ice. While this window or the Labroll window is open, Card Rename also shows in the Dock and the app switcher. The panel shows the version (e.g. `v1.1 (2)`).
+The same panel opens in a window on first launch, and whenever the app is opened again from Applications. Useful when the menu bar icon is hidden: behind the notch on a full menu bar, switched off in System Settings > Menu Bar, or tucked away by Bartender or Ice. While this window or the Labroll window is open, Card Rename also shows in the Dock and the app switcher. The panel shows the version (e.g. `v1.2 (3)`).
 
 Each rename posts a notification with an **Undo** button (hover the banner, or set Card Rename to "Alerts" in System Settings > Notifications to keep the button visible). After an undo, the automation leaves that card alone until it is reformatted.
 
@@ -48,7 +48,22 @@ A001C001_20261102_GOPRO.MP4  A001C002_20261102_GOPRO.MP4  A001C003_20261102_GOPR
 - Once the card is ready (right after the rename, or when it is inserted again if it was ejected), its clips are listed in the **Labroll** window, with their names before and after. Nothing is copied or renamed until you click.
 - **Copy + rename**: clips are copied to the destination folder under their new names, each copy read back from disk and checked with xxHash64. A log `A001_YYYY-MM-DD_HHMMSS.log` (old name, new name, hash, Labroll Utility's format) is written next to them. Existing files are never overwritten; Cancel deletes the partial copy, and the same button continues later.
 - **Rename only, on the card**: clips are renamed in place. Camera indexes (Sony XML, GoPro LRF/THM) no longer match, so old and new names are kept in `~/Library/Logs/CardRename-clips.log`.
-- Clips or folders can also be dropped on the window, or added with **Add clips…**. Order: creation time in the MP4/MOV header, else the file creation date, then GoPro clip and chapter. MP4, MOV, and MXF unless ignored; the date in the names is the day of the copy.
+- Clips or folders can also be dropped on the window, or added with **Add clips…**. Order: creation time in the MP4/MOV header, else the file creation date, then GoPro clip and chapter. MP4, MOV, and MXF unless ignored.
+
+### Naming scheme
+
+Clip and card names follow two templates, set under **Naming scheme** in the Labroll window:
+
+| Token | Gives | Example |
+| --- | --- | --- |
+| `{labroll}` | labroll of the roll | `A001` |
+| `{clip:3}` | clip number, 2 to 4 digits (clips only) | `001` |
+| `{date:YYYYMMDD}` | date, format picked in the **Date** menu: YYYYMMDD, YYMMDD, YYYY-MM-DD, DDMMYY, DDMMYYYY, MMDDYY | `20261102` |
+| `{cam}` | Cam ID, or the camera found on the card | `GOPRO` |
+| `{name}` | original clip name, without extension (clips only) | `GX010001` |
+| `{random:4}` | random characters (A-Z 2-9, no 0/O 1/I), against duplicate names | `X7K2` |
+
+Defaults: clips `{labroll}C{clip:3}_{date:YYYYMMDD}_{cam}`, cards `{labroll}_{date:YYYYMMDD}_{cam}`. The **Add** buttons append a token; anything else typed is kept as is. An empty token takes its separator with it (no Cam ID gives `A001C001_20261102`). The date is the day of the copy or rename, or the recording date (cards: oldest clip on the card). A live example shows the result, and card labels are shortened to fit 11 characters (FAT32, exFAT): YYYY becomes YY, then the date, camera and original name are left out, random characters kept.
 
 ## Build
 

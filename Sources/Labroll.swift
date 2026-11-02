@@ -127,11 +127,9 @@ enum Labroll {
 
     // MARK: - Names
 
-    /// A001C001_20261102_GOPRO.MP4 (extension kept as on the card).
+    /// A001C001_20261102_GOPRO.MP4 (extension kept as on the card), with the default scheme.
     static func clipName(labroll: String, index: Int, date: Date, camID: String, extension ext: String) -> String {
-        let cam = camID.trimmingCharacters(in: .whitespaces)
-        let base = "\(labroll.trimmingCharacters(in: .whitespaces))C\(String(format: "%03d", index))_\(day(date, "yyyyMMdd"))"
-        return (cam.isEmpty ? base : "\(base)_\(cam)") + (ext.isEmpty ? "" : ".\(ext)")
+        NameScheme.clipDefault.clipName(.init(labroll: labroll, clip: index, date: date, cam: camID), extension: ext)
     }
 
     /// A001 -> A002, B099 -> B100. Unchanged when there is no number.
@@ -142,23 +140,10 @@ enum Labroll {
         return "\(prefix)\(String(format: "%03d", number + 1))"
     }
 
-    /// Card name LABROLL_YYYYMMDD_CAMERA, parts dropped until it fits the label limit:
+    /// Card name LABROLL_YYYYMMDD_CAMERA with the default scheme, parts dropped until it fits the label limit:
     /// A001_20261102_GOPRO -> A001_261102_GOPRO -> A001_GOPRO -> A001.
     static func cardName(labroll: String, camera: String, date: Date, maxLength: Int) -> String {
-        let labroll = CardScan.cleanName(labroll, maxLength: .max)
-        let camera = CardScan.cleanName(camera, maxLength: .max)
-        let candidates = [
-            [labroll, day(date, "yyyyMMdd"), camera],
-            [labroll, day(date, "yyMMdd"), camera],
-            [labroll, camera],
-            [labroll],
-        ]
-        var name = ""
-        for parts in candidates {
-            name = parts.filter { !$0.isEmpty }.joined(separator: "_")
-            if !name.isEmpty && name.count <= maxLength { return name }
-        }
-        return CardScan.cleanName(name, maxLength: maxLength)
+        NameScheme.cardDefault.cardName(.init(labroll: labroll, date: date, cam: camera), maxLength: maxLength)
     }
 
     static func day(_ date: Date, _ format: String) -> String {

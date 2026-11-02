@@ -170,7 +170,7 @@ oldest_date () {
     | /usr/bin/sort -n | /usr/bin/head -1 | /usr/bin/cut -d' ' -f2
 }
 
-# Keep A-Z 0-9 _ - and fit the file system label limit (FAT32 11, exFAT 15).
+# Keep A-Z 0-9 _ - and fit the file system label limit (FAT32 and exFAT 11).
 clean_name () {
   local name max="$2"
   name=$(printf '%s' "$1" | /usr/bin/tr 'a-z' 'A-Z' | /usr/bin/tr -cd 'A-Z0-9_-')
@@ -180,9 +180,8 @@ clean_name () {
 
 label_max () {
   case "$(vol_info "$1" 'File System Personality')" in
-    *ExFAT*|*exFAT*) echo 15 ;;
     *APFS*|*HFS*)    echo 27 ;;
-    *)               echo 11 ;;   # MS-DOS FAT32 or unknown
+    *)               echo 11 ;;   # exFAT, MS-DOS FAT32 or unknown
   esac
 }
 

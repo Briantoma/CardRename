@@ -70,7 +70,7 @@ expectTrue("looks like card: ronin (no fixed folder)", CardScan.looksLikeCard(ba
 expectTrue("looks like card: fx3", CardScan.looksLikeCard(base.appendingPathComponent("fx3")))
 make("stick/notes/holiday.mp4")
 expectTrue("not a card: USB stick with a video", !CardScan.looksLikeCard(base.appendingPathComponent("stick")))
-expectTrue("label limits", CardScan.maxLabelLength(fsType: "exfat") == 15 && CardScan.maxLabelLength(fsType: "msdos") == 11)
+expectTrue("label limits", CardScan.maxLabelLength(fsType: "exfat") == 11 && CardScan.maxLabelLength(fsType: "msdos") == 11)
 expectTrue("statfs of /", VolumeInfo(path: "/")?.fsType == "apfs")
 
 // MARK: - Labroll
@@ -138,11 +138,34 @@ expectEqual("clip name without cam ID", Labroll.clipName(labroll: " A001 ", inde
 expectEqual("next labroll", [Labroll.next("A001"), Labroll.next("B099"), Labroll.next("A999"), Labroll.next("DAY")],
             ["A002", "B100", "A1000", "DAY"])
 expectEqual("card name, APFS", Labroll.cardName(labroll: "A001", camera: "GOPRO", date: day, maxLength: 27), "A001_20261102_GOPRO")
-expectEqual("card name, exFAT", Labroll.cardName(labroll: "A001", camera: "GOPRO", date: day, maxLength: 15), "A001_GOPRO")
-expectEqual("card name, exFAT DJI", Labroll.cardName(labroll: "A001", camera: "DJI", date: day, maxLength: 15), "A001_261102_DJI")
+expectEqual("card name, 15 characters", Labroll.cardName(labroll: "A001", camera: "GOPRO", date: day, maxLength: 15), "A001_GOPRO")
+expectEqual("card name, 15 characters DJI", Labroll.cardName(labroll: "A001", camera: "DJI", date: day, maxLength: 15), "A001_261102_DJI")
 expectEqual("card name, FAT32 DJI", Labroll.cardName(labroll: "A001", camera: "DJI", date: day, maxLength: 11), "A001_DJI")
 expectEqual("card name, long camera", Labroll.cardName(labroll: "a001", camera: "very long camera", date: day, maxLength: 11), "A001")
 expectEqual("card name, long labroll", Labroll.cardName(labroll: "LONGLABROLL001", camera: "X", date: day, maxLength: 11), "LONGLABROLL")
+
+// Custom name schemes
+let values = NameScheme.Values(labroll: "A001", clip: 7, date: day, cam: "GOPRO", name: "GX010001", random: "X7K2R9P4")
+expectEqual("scheme: date formats and digits",
+            NameScheme(template: "{date:YYMMDD}-{labroll}C{clip:4}").clipName(values, extension: "MP4"), "261102-A001C0007.MP4")
+expectEqual("scheme: every date format",
+            NameScheme.dateFormats.map { NameScheme.date(day, format: $0) },
+            ["20261102", "261102", "2026-11-02", "021126", "02112026", "110226"])
+expectEqual("scheme: original name and random",
+            NameScheme(template: "{name}_{labroll}_{random:3}").clipName(values, extension: "MP4"), "GX010001_A001_X7K.MP4")
+expectEqual("scheme: empty token takes its separator",
+            NameScheme(template: "{cam}_{labroll}_{cam}_{clip:2}").clipName(.init(labroll: "A001", clip: 3), extension: ""), "A001_03")
+expectEqual("scheme: unknown token kept", NameScheme(template: "{labroll}{came}").unknownTokens, ["{came}"])
+expectEqual("scheme: no slash in clip names",
+            NameScheme(template: "{labroll}/{cam}:x").clipName(values, extension: "MP4"), "A001-GOPRO-x.MP4")
+expectEqual("scheme: empty template falls back",
+            NameScheme(template: "").clipName(values, extension: "MP4"), "A001C007_20261102_GOPRO.MP4")
+let cardScheme = NameScheme(template: "{labroll}_{date:YYYYMMDD}_{cam}_{random:4}")
+expectEqual("scheme: card keeps random, 15 characters", cardScheme.cardName(values, maxLength: 15), "A001_GOPRO_X7K2")
+expectEqual("scheme: card keeps random, 11 characters", cardScheme.cardName(values, maxLength: 11), "A001_X7K2")
+expectEqual("scheme: card ISO date", NameScheme(template: "{date:YYYY-MM-DD}_{labroll}").cardName(values, maxLength: 27), "2026-11-02_A001")
+expectTrue("scheme: random characters", NameScheme.randomCharacters().count == 8
+           && NameScheme.randomCharacters(100).allSatisfy { !"01OI".contains($0) })
 
 // Reference values from Python's xxhash (the library Labroll Utility uses).
 let digits = Array("0123456789".utf8)
