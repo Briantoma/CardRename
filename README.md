@@ -20,7 +20,7 @@ Only cards still carrying a default name (UNTITLED, NO NAME, NONAME, DJI, editab
 - **Settings**: default card names, ask for a name when there is no reel ID, name cards without reel ID after the labroll, eject the card after renaming, open at login, show icon in menu bar.
 - **Open log**: `~/Library/Logs/CardRename.log` (same format as `rename_card.sh`).
 
-The same panel opens in a window on first launch, and whenever the app is opened again from Applications. Useful when the menu bar icon is hidden: behind the notch on a full menu bar, switched off in System Settings > Menu Bar, or tucked away by Bartender or Ice.
+The same panel opens in a window on first launch, and whenever the app is opened again from Applications. Useful when the menu bar icon is hidden: behind the notch on a full menu bar, switched off in System Settings > Menu Bar, or tucked away by Bartender or Ice. While this window or the Labroll window is open, Card Rename also shows in the Dock and the app switcher. The panel shows the version (e.g. `v1.1 (2)`).
 
 Each rename posts a notification with an **Undo** button (hover the banner, or set Card Rename to "Alerts" in System Settings > Notifications to keep the button visible). After an undo, the automation leaves that card alone until it is reformatted.
 
@@ -45,7 +45,7 @@ A001C001_20261102_GOPRO.MP4  A001C002_20261102_GOPRO.MP4  A001C003_20261102_GOPR
 ```
 
 - The card itself is named after the same labroll: `A001_20261102_GOPRO`, shortened to fit the label limit (`A001_261102_GOPRO`, then `A001_GOPRO`, then `A001`). The camera part is the Cam ID field, or the camera found on the card. The labroll counter then moves to `A002`. Turn this off in Settings to get the old `MODEL_YYMMDD` names.
-- Once the card is ready (right after the rename, or when it is inserted again if it was ejected), its clips are listed in the **Labroll** window. Nothing is copied or renamed until you click.
+- Once the card is ready (right after the rename, or when it is inserted again if it was ejected), its clips are listed in the **Labroll** window, with their names before and after. Nothing is copied or renamed until you click.
 - **Copy + rename**: clips are copied to the destination folder under their new names, each copy read back from disk and checked with xxHash64. A log `A001_YYYY-MM-DD_HHMMSS.log` (old name, new name, hash, Labroll Utility's format) is written next to them. Existing files are never overwritten; Cancel deletes the partial copy, and the same button continues later.
 - **Rename only, on the card**: clips are renamed in place. Camera indexes (Sony XML, GoPro LRF/THM) no longer match, so old and new names are kept in `~/Library/Logs/CardRename-clips.log`.
 - Clips or folders can also be dropped on the window, or added with **Add clips…**. Order: creation time in the MP4/MOV header, else the file creation date, then GoPro clip and chapter. MP4, MOV, and MXF unless ignored; the date in the names is the day of the copy.

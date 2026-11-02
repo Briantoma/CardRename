@@ -92,8 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.center()
             self.window = window
         }
-        NSApp.activate(ignoringOtherApps: true)
-        window?.makeKeyAndOrderFront(nil)
+        if let window { opened(window) }
     }
 
     private var labrollWindow: NSWindow?
@@ -112,8 +111,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if !window.setFrameUsingName("Labroll") { window.center() }
             labrollWindow = window
         }
+        if let labrollWindow { opened(labrollWindow) }
+    }
+
+    /// Windows open (minimised included). While any is, the app shows in the Dock and the app switcher.
+    private var openWindows = Set<NSWindow>()
+
+    @MainActor private func opened(_ window: NSWindow) {
+        if openWindows.insert(window).inserted {
+            NotificationCenter.default.addObserver(self, selector: #selector(windowWillClose),
+                                                   name: NSWindow.willCloseNotification, object: window)
+        }
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        labrollWindow?.makeKeyAndOrderFront(nil)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    @MainActor @objc private func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: window)
+        openWindows.remove(window)
+        if openWindows.isEmpty { NSApp.setActivationPolicy(.accessory) }
     }
 }
 
@@ -122,10 +140,17 @@ struct PanelView: View {
     @ObservedObject var engine: Engine
     var inWindow = false
 
+    static let version: String = {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let short = info["CFBundleShortVersionString"] as? String ?? "?"
+        return "v\(short) (\(info["CFBundleVersion"] as? String ?? "?"))"
+    }()
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Card Rename").font(.headline)
+                Text(Self.version).font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 if engine.busy { ProgressView().controlSize(.small) }
             }
@@ -183,8 +208,8 @@ struct PanelView: View {
                     Toggle("Eject the card after renaming", isOn: $engine.ejectAfterRename)
                     Text("""
                         After a rename, eject the card and insert it again before offloading. \
-                        Until then Finder and offload apps can still see it under its old name, \
-                        and if another volume already has the new name, macOS mounts this one as "E003 1".
+                        Until then Finder and offload apps can often not see a new card mounted \
+                        with a duplicate "Untitled" name.
                         """)
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

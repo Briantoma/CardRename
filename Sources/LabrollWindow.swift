@@ -378,18 +378,26 @@ struct RollView: View {
             }
             .disabled(store.running)
 
-            ForEach(roll.clips) { clip in
-                HStack(spacing: 6) {
-                    icon(clip.state)
-                    Text(clip.originalName).foregroundStyle(.secondary)
-                    Image(systemName: "arrow.right").font(.caption).foregroundStyle(.tertiary)
-                    Text(store.preview(roll, clip))
-                    Spacer()
-                    Text(ByteCountFormatter.string(fromByteCount: clip.size, countStyle: .file))
-                        .font(.caption).foregroundStyle(.tertiary)
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
+                GridRow {
+                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                    Text("Before")
+                    Text("After")
+                    Text("Size").gridColumnAlignment(.trailing)
                 }
-                .font(.system(.body, design: .monospaced))
-                .help(failure(clip.state))
+                .font(.caption).foregroundStyle(.secondary)
+                ForEach(roll.clips) { clip in
+                    GridRow {
+                        icon(clip.state)
+                        Text(clip.originalName).foregroundStyle(.secondary)
+                        Text(store.preview(roll, clip))
+                        Text(ByteCountFormatter.string(fromByteCount: clip.size, countStyle: .file))
+                            .font(.caption).foregroundStyle(.tertiary)
+                    }
+                    .font(.system(.body, design: .monospaced))
+                    .lineLimit(1)
+                    .help(failure(clip.state))
+                }
             }
         }
         .padding(8)
