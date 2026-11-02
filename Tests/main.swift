@@ -73,6 +73,118 @@ expectTrue("not a card: USB stick with a video", !CardScan.looksLikeCard(base.ap
 expectTrue("label limits", CardScan.maxLabelLength(fsType: "exfat") == 15 && CardScan.maxLabelLength(fsType: "msdos") == 11)
 expectTrue("statfs of /", VolumeInfo(path: "/")?.fsType == "apfs")
 
+// MARK: - Labroll
+
+func expectEqual<T: Equatable>(_ name: String, _ got: T, _ expected: T) {
+    if got == expected { print("ok    \(name)") } else { print("FAIL  \(name): got \(got), expected \(expected)"); failures += 1 }
+}
+
+let stamp: DateFormatter = {
+    let format = DateFormatter()
+    format.dateFormat = "yyyy-MM-dd HH:mm:ss"
+    return format
+}()
+
+/// Minimal MP4: ftyp, mdat, then moov/mvhd with its creation time (nil: no moov at all).
+func makeMP4(_ path: String, recorded: String?, created: String = "2026-09-16 09:00:00") {
+    let url = base.appendingPathComponent(path)
+    try! fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    func be32(_ v: UInt32) -> [UInt8] { withUnsafeBytes(of: v.bigEndian, Array.init) }
+    var bytes: [UInt8] = be32(16) + Array("ftypisom".utf8) + be32(0) + be32(12) + Array("mdat".utf8) + [1, 2, 3, 4]
+    if let recorded {
+        let seconds = UInt32(stamp.date(from: recorded)!.timeIntervalSince1970 + 2_082_844_800)
+        bytes += be32(28) + Array("moov".utf8) + be32(20) + Array("mvhd".utf8) + be32(0) + be32(seconds) + be32(seconds)
+    }
+    try! Data(bytes).write(to: url)
+    try! fm.setAttributes([.creationDate: stamp.date(from: created)!], ofItemAtPath: url.path)
+}
+
+func names(_ urls: [URL]) -> [String] { urls.map { $0.path.replacingOccurrences(of: base.path + "/", with: "") } }
+
+makeMP4("lab/gopro/DCIM/100GOPRO/GX010002.MP4", recorded: "2026-11-02 10:05:00")
+makeMP4("lab/gopro/DCIM/100GOPRO/GX020001.MP4", recorded: "2026-11-02 10:02:00")
+makeMP4("lab/gopro/DCIM/100GOPRO/GX010001.MP4", recorded: "2026-11-02 10:00:00")
+makeMP4("lab/gopro/DCIM/100GOPRO/GH020003.MP4", recorded: "2026-11-02 11:00:00")
+makeMP4("lab/gopro/DCIM/100GOPRO/GH010003.MP4", recorded: "2026-11-02 11:00:00")
+makeMP4("lab/gopro/DCIM/100GOPRO/._GX010001.MP4", recorded: nil)
+make("lab/gopro/DCIM/100GOPRO/GX010009.MP4")   // empty file, skipped
+make("lab/gopro/DCIM/100GOPRO/GX010001.LRF", text: "x")
+expectEqual("GoPro clips in shooting order, chapters kept together",
+            names(Labroll.clips(in: [base.appendingPathComponent("lab/gopro")], ignoreMXF: true)),
+            ["GX010001.MP4", "GX020001.MP4", "GX010002.MP4", "GH010003.MP4", "GH020003.MP4"]
+                .map { "lab/gopro/DCIM/100GOPRO/\($0)" })
+
+makeMP4("lab/dji/DJI_0002.MP4", recorded: nil, created: "2026-11-02 09:00:00")
+makeMP4("lab/dji/DJI_0001.MP4", recorded: nil, created: "2026-11-02 10:00:00")
+makeMP4("lab/dji/sub/DJI_0003.MOV", recorded: "2026-11-01 08:00:00")
+make("lab/dji/A001C001_x.MXF", text: "mxf")
+expectEqual("no header date: file creation date, subfolders after the files",
+            names(Labroll.clips(in: [base.appendingPathComponent("lab/dji")], ignoreMXF: true)),
+            ["lab/dji/DJI_0002.MP4", "lab/dji/DJI_0001.MP4", "lab/dji/sub/DJI_0003.MOV"])
+expectTrue("MXF kept when not ignored",
+           Labroll.clips(in: [base.appendingPathComponent("lab/dji")], ignoreMXF: false).count == 4)
+expectEqual("loose files sorted too",
+            names(Labroll.clips(in: [base.appendingPathComponent("lab/dji/DJI_0001.MP4"),
+                                     base.appendingPathComponent("lab/dji/DJI_0002.MP4")], ignoreMXF: true)),
+            ["lab/dji/DJI_0002.MP4", "lab/dji/DJI_0001.MP4"])
+expectEqual("mvhd date", Labroll.movieHeaderDate(base.appendingPathComponent("lab/dji/sub/DJI_0003.MOV")),
+            stamp.date(from: "2026-11-01 08:00:00"))
+
+let day = stamp.date(from: "2026-11-02 12:00:00")!
+expectEqual("clip name", Labroll.clipName(labroll: "A001", index: 7, date: day, camID: "GOPRO", extension: "MP4"),
+            "A001C007_20261102_GOPRO.MP4")
+expectEqual("clip name without cam ID", Labroll.clipName(labroll: " A001 ", index: 12, date: day, camID: " ", extension: "mov"),
+            "A001C012_20261102.mov")
+expectEqual("next labroll", [Labroll.next("A001"), Labroll.next("B099"), Labroll.next("A999"), Labroll.next("DAY")],
+            ["A002", "B100", "A1000", "DAY"])
+expectEqual("card name, APFS", Labroll.cardName(labroll: "A001", camera: "GOPRO", date: day, maxLength: 27), "A001_20261102_GOPRO")
+expectEqual("card name, exFAT", Labroll.cardName(labroll: "A001", camera: "GOPRO", date: day, maxLength: 15), "A001_GOPRO")
+expectEqual("card name, exFAT DJI", Labroll.cardName(labroll: "A001", camera: "DJI", date: day, maxLength: 15), "A001_261102_DJI")
+expectEqual("card name, FAT32 DJI", Labroll.cardName(labroll: "A001", camera: "DJI", date: day, maxLength: 11), "A001_DJI")
+expectEqual("card name, long camera", Labroll.cardName(labroll: "a001", camera: "very long camera", date: day, maxLength: 11), "A001")
+expectEqual("card name, long labroll", Labroll.cardName(labroll: "LONGLABROLL001", camera: "X", date: day, maxLength: 11), "LONGLABROLL")
+
+// Reference values from Python's xxhash (the library Labroll Utility uses).
+let digits = Array("0123456789".utf8)
+let vectors: [([UInt8], String)] = [
+    ([], "ef46db3751d8e999"),
+    (Array("a".utf8), "d24ec4f1a98c6e5b"),
+    (Array("abc".utf8), "44bc2cf5ad770999"),
+    (digits + digits + digits + [48], "8b80da128591b789"),
+    (digits + digits + digits + [48, 49], "e5cc9f411ea110ba"),
+    (Array(repeating: Array(0...255).map(UInt8.init), count: 4).flatMap { $0 } + Array("xyz".utf8), "e146cb31b65bc21a"),
+]
+for (bytes, hex) in vectors {
+    expectEqual("xxHash64 of \(bytes.count) bytes", XXHash64.hex(Data(bytes)), hex)
+    var streamed = XXHash64()
+    var offset = 0
+    for size in [1, 5, 31, 7, 64, 3] where offset < bytes.count {
+        let end = min(bytes.count, offset + size)
+        streamed.update(Data(bytes[offset..<end]))
+        offset = end
+    }
+    if offset < bytes.count { streamed.update(Data(bytes[offset...])) }
+    expectEqual("xxHash64 streamed, \(bytes.count) bytes", streamed.hexDigest(), hex)
+}
+
+let copySource = base.appendingPathComponent("lab/copy/GX010001.MP4")
+try! fm.createDirectory(at: copySource.deletingLastPathComponent(), withIntermediateDirectories: true)
+let payload = Data((0..<(3 << 20) + 17).map { UInt8(truncatingIfNeeded: $0 &* 31) })
+try! payload.write(to: copySource)
+let copyTarget = base.appendingPathComponent("lab/copy/out/A001C001_20261102.MP4")
+try! fm.createDirectory(at: copyTarget.deletingLastPathComponent(), withIntermediateDirectories: true)
+var copied = 0
+let copyHash = try? Labroll.copyVerified(copySource, to: copyTarget, progress: { copied += $0 }, cancelled: { false })
+expectEqual("verified copy hash", copyHash, XXHash64.hex(payload))
+expectTrue("copy identical, progress complete", (try? Data(contentsOf: copyTarget)) == payload && copied == payload.count)
+expectTrue("copy never overwrites", (try? Labroll.copyVerified(copySource, to: copyTarget, progress: { _ in }, cancelled: { false })) == nil)
+let cancelledTarget = base.appendingPathComponent("lab/copy/out/cancelled.MP4")
+_ = try? Labroll.copyVerified(copySource, to: cancelledTarget, progress: { _ in }, cancelled: { true })
+expectTrue("cancelled copy removed", !fm.fileExists(atPath: cancelledTarget.path))
+let renamed = try? Labroll.renameInPlace(copySource, to: "A001C001_20261102_GOPRO.MP4")
+expectTrue("rename in place", renamed?.lastPathComponent == "A001C001_20261102_GOPRO.MP4" && !fm.fileExists(atPath: copySource.path))
+expectTrue("rename never overwrites", (try? Labroll.renameInPlace(renamed!, to: "out")) == nil)
+
 try? fm.removeItem(at: base)
 print(failures == 0 ? "\nAll tests passed" : "\n\(failures) failed")
 exit(failures == 0 ? 0 : 1)
