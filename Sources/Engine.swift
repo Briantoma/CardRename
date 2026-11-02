@@ -31,11 +31,15 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
     @Published var askWhenNoReel: Bool { didSet { store.set(askWhenNoReel, forKey: "askWhenNoReel") } }
     @Published var showMenuBarIcon: Bool { didSet { store.set(showMenuBarIcon, forKey: "showMenuBarIcon") } }
     @Published var ejectAfterRename: Bool { didSet { store.set(ejectAfterRename, forKey: "ejectAfterRename") } }
+    @Published var labrollForNoReel: Bool { didSet { store.set(labrollForNoReel, forKey: "labrollForNoReel") } }
     @Published private(set) var recent: [RenameEntry] = []
     @Published private(set) var mountedNames = Set<String>()
     @Published private(set) var busy = false
 
-    let logURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/CardRename.log")
+    /// CARDRENAME_LOG overrides it, as in rename_card.sh.
+    nonisolated static let logURL = ProcessInfo.processInfo.environment["CARDRENAME_LOG"].map { URL(fileURLWithPath: $0) }
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/CardRename.log")
+    var logURL: URL { Self.logURL }
     private let ignoreURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/CardRename/undone.txt")
     private var inProgress = Set<String>()
@@ -49,6 +53,7 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
         askWhenNoReel = store.object(forKey: "askWhenNoReel") as? Bool ?? true
         showMenuBarIcon = store.object(forKey: "showMenuBarIcon") as? Bool ?? true
         ejectAfterRename = store.object(forKey: "ejectAfterRename") as? Bool ?? false
+        labrollForNoReel = store.object(forKey: "labrollForNoReel") as? Bool ?? true
         super.init()
         loadLog()
         refreshMounted()
@@ -59,6 +64,7 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
             let url = note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL
             Task { @MainActor in
                 self?.refreshMounted()
+                if let url { self?.labrollCardMounted(url) }
                 if let url, self?.enabled == true { await self?.process(url, auto: true) }
             }
         }
@@ -101,15 +107,20 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
 
         let maxLength = CardScan.maxLabelLength(fsType: info.fsType)
         busy = true
-        let (isCard, proposal) = await Task.detached {
+        let (isCard, proposal, camera) = await Task.detached {
             let proposal = CardScan.analyze(root: volume, maxLength: maxLength)
-            return (proposal == .unreadable || CardScan.looksLikeCard(volume), proposal)
+            var camera = ""
+            if case .noReel = proposal {
+                camera = CardScan.cameraTag(root: volume, files: CardScan.mediaFiles(in: volume))
+            }
+            return (proposal == .unreadable || CardScan.looksLikeCard(volume), proposal, camera)
         }.value
         busy = false
 
         if auto && !isCard { return }   // a USB stick or a disk image, not a camera card
 
         var newName: String
+        var labrollCard: (labroll: String, camera: String)?   // card without reel ID named after its labroll
         switch proposal {
         case .unreadable:
             alert("Cannot read \(current)",
@@ -124,7 +135,15 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
             return
         case .reel(let reel):
             newName = reel
-        case .noReel(let suggestion):
+        case .noReel(var suggestion):
+            // A001_GOPRO: same labroll as the clips will get in the Labroll window
+            let labroll = LabrollStore.shared.nextLabroll.trimmingCharacters(in: .whitespaces)
+            if labrollForNoReel && !labroll.isEmpty {
+                let camID = LabrollStore.shared.camID.trimmingCharacters(in: .whitespaces)
+                let card = (labroll: labroll, camera: camID.isEmpty ? camera : camID)
+                suggestion = Labroll.cardName(labroll: card.labroll, camera: card.camera, date: Date(), maxLength: maxLength)
+                labrollCard = card
+            }
             if askWhenNoReel {
                 guard let answer = askName(current: current, suggestion: suggestion, maxLength: maxLength) else { return }
                 newName = CardScan.cleanName(answer, maxLength: maxLength)
@@ -154,6 +173,14 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
         recent.insert(entry, at: 0)
         appendLog(entry, undo: false)
 
+        if let card = labrollCard {
+            LabrollStore.shared.consume(card.labroll)
+            rememberLabrollCard(uuid, labroll: card.labroll, camera: card.camera, waitingForMount: ejectAfterRename)
+            if !ejectAfterRename {
+                sendToLabroll(URL(fileURLWithPath: "/Volumes/\(newName)"), labroll: card.labroll, camera: card.camera)
+            }
+        }
+
         guard ejectAfterRename else { notifyRenamed(entry); return }
         let eject = await diskutil(["eject", Self.wholeDisk(info.device)])
         if eject.ok {
@@ -162,6 +189,39 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
             notifyRenamed(entry)
             alert("\(newName) was renamed but not ejected", "Eject it from Finder, then remove it and insert it again.\n\n\(eject.output)")
         }
+    }
+
+    // MARK: - Labroll
+
+    /// Cards named after a labroll, by volume UUID: [labroll, camera, "1" while waiting to be inserted again].
+    private var labrollCards: [String: [String]] {
+        get { store.dictionary(forKey: "labrollCards") as? [String: [String]] ?? [:] }
+        set { store.set(newValue, forKey: "labrollCards") }
+    }
+
+    private func rememberLabrollCard(_ uuid: String, labroll: String, camera: String, waitingForMount: Bool) {
+        guard !uuid.isEmpty else { return }
+        labrollCards[uuid] = [labroll, camera, waitingForMount ? "1" : "0"]
+    }
+
+    /// A card ejected after its rename is back: list its clips in the Labroll window.
+    private func labrollCardMounted(_ volume: URL) {
+        guard let uuid = (try? volume.resourceValues(forKeys: [.volumeUUIDStringKey]))?.volumeUUIDString,
+              let card = labrollCards[uuid], card.count == 3, card[2] == "1" else { return }
+        labrollCards[uuid] = [card[0], card[1], "0"]
+        sendToLabroll(volume, labroll: card[0], camera: card[1])
+    }
+
+    /// "Clips" button of a recent rename.
+    func sendToLabroll(_ entry: RenameEntry) {
+        let card = labrollCards[entry.uuid]
+        if let card, card.count == 3 { labrollCards[entry.uuid] = [card[0], card[1], "0"] }
+        sendToLabroll(URL(fileURLWithPath: "/Volumes/\(entry.new)"), labroll: card?.first, camera: card?.dropFirst().first)
+    }
+
+    private func sendToLabroll(_ volume: URL, labroll: String?, camera: String?) {
+        LabrollStore.shared.add([volume], source: volume.lastPathComponent, labroll: labroll, camID: camera)
+        LabrollStore.shared.openWindow?()
     }
 
     /// /dev/disk4s1 -> /dev/disk4: ejecting the whole card, not only its volume.

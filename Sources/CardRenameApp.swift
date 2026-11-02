@@ -57,6 +57,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        LabrollStore.shared.openWindow = { [weak self] in self?.showLabrollWindow() }
+
         if !UserDefaults.standard.bool(forKey: "launchedBefore") {
             UserDefaults.standard.set(true, forKey: "launchedBefore")
             showWindow()
@@ -93,6 +95,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
+
+    private var labrollWindow: NSWindow?
+
+    /// Clips of a card renamed LABROLL C### _YYYYMMDD _CAMID, copied or renamed in place.
+    @MainActor func showLabrollWindow() {
+        popover.performClose(nil)
+        if labrollWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 560),
+                                  styleMask: [.titled, .closable, .resizable, .miniaturizable],
+                                  backing: .buffered, defer: false)
+            window.title = "Labroll"
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: LabrollView(store: .shared))
+            window.setFrameAutosaveName("Labroll")
+            if !window.setFrameUsingName("Labroll") { window.center() }
+            labrollWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        labrollWindow?.makeKeyAndOrderFront(nil)
+    }
 }
 
 struct PanelView: View {
@@ -117,7 +139,12 @@ struct PanelView: View {
             Toggle("Rename cards automatically", isOn: $engine.enabled)
                 .toggleStyle(.switch)
 
-            Button("Rename cards now") { Task { await engine.renameNow() } }
+            HStack {
+                Button("Rename cards now") { Task { await engine.renameNow() } }
+                Spacer()
+                Button("Labroll…") { LabrollStore.shared.openWindow?() }
+                    .help("Rename the clips of a card A001C001_YYYYMMDD_CAMID, copied or in place")
+            }
 
             Divider()
 
@@ -133,6 +160,8 @@ struct PanelView: View {
                     if entry.undone {
                         Text("undone").foregroundStyle(.secondary)
                     } else if engine.isMounted(entry) {
+                        Button("Clips") { engine.sendToLabroll(entry) }
+                            .help("List this card's clips in the Labroll window")
                         Button("Undo") { Task { await engine.undo(entry) } }
                     } else {
                         Text("not mounted").foregroundStyle(.tertiary)
@@ -147,6 +176,10 @@ struct PanelView: View {
                     Text("Default card names, comma separated").font(.caption).foregroundStyle(.secondary)
                     TextField("UNTITLED, NO NAME, DJI", text: $engine.defaultNames)
                     Toggle("Ask for a name when clips have no reel ID", isOn: $engine.askWhenNoReel)
+                    Toggle("Name cards without reel ID after the labroll", isOn: $engine.labrollForNoReel)
+                    Text("A001_GOPRO from the Labroll window's next labroll and Cam ID; the card's clips are listed there once it is ready.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Toggle("Eject the card after renaming", isOn: $engine.ejectAfterRename)
                     Text("""
                         After a rename, eject the card and insert it again before offloading. \
