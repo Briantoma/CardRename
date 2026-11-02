@@ -1,29 +1,62 @@
+import Combine
 import SwiftUI
 
 @main
 struct CardRenameApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @ObservedObject private var engine = Engine.shared
 
+    // The menu bar item and the window are AppKit objects owned by AppDelegate.
     var body: some Scene {
-        // MenuBarExtra writes this binding back on every update: passing $engine.showMenuBarIcon
-        // republishes the engine each time and loops at full CPU. Only store real changes.
-        MenuBarExtra(isInserted: Binding(get: { engine.showMenuBarIcon },
-                                         set: { if $0 != engine.showMenuBarIcon { engine.showMenuBarIcon = $0 } })) {
-            PanelView(engine: engine)
-        } label: {
-            Image(systemName: engine.enabled ? "sdcard.fill" : "sdcard")
-        }
-        .menuBarExtraStyle(.window)
+        Settings { EmptyView() }
     }
 }
 
-/// The menu bar icon can be hidden (notch, crowded menu bar, Bartender...).
+/// Classic NSStatusItem rather than SwiftUI's MenuBarExtra: it gets its own autosave name
+/// ("CardRename" instead of the generic "Item-0"), so menu bar managers such as Ice can list it.
+///
+/// The icon can still be hidden (notch, crowded menu bar, the "Show icon" setting...).
 /// Opening the app again, or launching it for the first time, shows the same panel in a window.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusItem: NSStatusItem!
+    private let popover = NSPopover()
     private var window: NSWindow?
+    private var watchers = Set<AnyCancellable>()
+    private var visibilityWatch: NSKeyValueObservation?
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    @MainActor func applicationDidFinishLaunching(_ notification: Notification) {
+        let engine = Engine.shared
+
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem.autosaveName = "CardRename"
+        statusItem.behavior = .removalAllowed   // Cmd-drag out of the menu bar hides it
+        statusItem.button?.action = #selector(togglePopover)
+        statusItem.button?.target = self
+        statusItem.button?.toolTip = "Card Rename"
+
+        let panel = NSHostingController(rootView: PanelView(engine: engine))
+        panel.sizingOptions = .preferredContentSize
+        popover.contentViewController = panel
+        popover.behavior = .transient
+
+        engine.$enabled
+            .sink { [weak self] on in
+                let image = NSImage(systemSymbolName: on ? "sdcard.fill" : "sdcard", accessibilityDescription: "Card Rename")
+                image?.isTemplate = true
+                self?.statusItem.button?.image = image
+            }
+            .store(in: &watchers)
+        engine.$showMenuBarIcon
+            .sink { [weak self] show in
+                if self?.statusItem.isVisible != show { self?.statusItem.isVisible = show }
+            }
+            .store(in: &watchers)
+        visibilityWatch = statusItem.observe(\.isVisible) { item, _ in
+            let visible = item.isVisible
+            Task { @MainActor in
+                if Engine.shared.showMenuBarIcon != visible { Engine.shared.showMenuBarIcon = visible }
+            }
+        }
+
         if !UserDefaults.standard.bool(forKey: "launchedBefore") {
             UserDefaults.standard.set(true, forKey: "launchedBefore")
             showWindow()
@@ -33,6 +66,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showWindow()
         return false
+    }
+
+    @MainActor @objc private func togglePopover() {
+        guard let button = statusItem.button else { return }
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
     }
 
     @MainActor func showWindow() {
@@ -104,6 +147,14 @@ struct PanelView: View {
                     Text("Default card names, comma separated").font(.caption).foregroundStyle(.secondary)
                     TextField("UNTITLED, NO NAME, DJI", text: $engine.defaultNames)
                     Toggle("Ask for a name when clips have no reel ID", isOn: $engine.askWhenNoReel)
+                    Toggle("Eject the card after renaming", isOn: $engine.ejectAfterRename)
+                    Text("""
+                        After a rename, eject the card and insert it again before offloading. \
+                        Until then Finder and offload apps can still see it under its old name, \
+                        and if another volume already has the new name, macOS mounts this one as "E003 1".
+                        """)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Toggle("Open at login", isOn: Binding(get: { engine.openAtLogin },
                                                           set: { engine.setOpenAtLogin($0) }))
                     Toggle("Show icon in menu bar", isOn: $engine.showMenuBarIcon)

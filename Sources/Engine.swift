@@ -30,6 +30,7 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
     @Published var defaultNames: String { didSet { store.set(defaultNames, forKey: "defaultNames") } }
     @Published var askWhenNoReel: Bool { didSet { store.set(askWhenNoReel, forKey: "askWhenNoReel") } }
     @Published var showMenuBarIcon: Bool { didSet { store.set(showMenuBarIcon, forKey: "showMenuBarIcon") } }
+    @Published var ejectAfterRename: Bool { didSet { store.set(ejectAfterRename, forKey: "ejectAfterRename") } }
     @Published private(set) var recent: [RenameEntry] = []
     @Published private(set) var mountedNames = Set<String>()
     @Published private(set) var busy = false
@@ -47,6 +48,7 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
         defaultNames = store.string(forKey: "defaultNames") ?? "UNTITLED, NO NAME, NONAME, DJI"
         askWhenNoReel = store.object(forKey: "askWhenNoReel") as? Bool ?? true
         showMenuBarIcon = store.object(forKey: "showMenuBarIcon") as? Bool ?? true
+        ejectAfterRename = store.object(forKey: "ejectAfterRename") as? Bool ?? false
         super.init()
         loadLog()
         refreshMounted()
@@ -134,6 +136,14 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
         if newName.isEmpty { alert("Empty name", "Nothing renamed on \(current)."); return }
         if newName == current { return }
 
+        // Two volumes with the same name: macOS mounts the second one as "E003 1", and
+        // offload apps can then copy from the wrong card.
+        if mountedNames.contains(newName) {
+            guard confirm("A volume named \(newName) is already mounted",
+                          "Renaming \(current) to \(newName) gives two cards with the same name; macOS will mount this one as \"\(newName) 1\". Eject the other \(newName) first, or rename anyway.",
+                          button: "Rename anyway") else { return }
+        }
+
         let result = await diskutilRename(info.device, to: newName)
         guard result.ok else {
             alert("Rename failed for \(current)", result.output)
@@ -143,7 +153,20 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
         let entry = RenameEntry(date: Date(), old: current, new: newName, uuid: uuid)
         recent.insert(entry, at: 0)
         appendLog(entry, undo: false)
-        notifyRenamed(entry)
+
+        guard ejectAfterRename else { notifyRenamed(entry); return }
+        let eject = await diskutil(["eject", Self.wholeDisk(info.device)])
+        if eject.ok {
+            notify("Card renamed \(newName) and ejected", "Please remove it and insert it again.")
+        } else {
+            notifyRenamed(entry)
+            alert("\(newName) was renamed but not ejected", "Eject it from Finder, then remove it and insert it again.\n\n\(eject.output)")
+        }
+    }
+
+    /// /dev/disk4s1 -> /dev/disk4: ejecting the whole card, not only its volume.
+    nonisolated static func wholeDisk(_ device: String) -> String {
+        device.replacing(try! Regex("s[0-9]+$"), with: "")
     }
 
     // MARK: - Undo
@@ -204,11 +227,15 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
     }
 
     private func diskutilRename(_ target: String, to name: String) async -> (ok: Bool, output: String) {
+        await diskutil(["rename", target, name])
+    }
+
+    private func diskutil(_ arguments: [String]) async -> (ok: Bool, output: String) {
         await Task.detached {
             let task = Process()
             let pipe = Pipe()
             task.executableURL = URL(fileURLWithPath: "/usr/sbin/diskutil")
-            task.arguments = ["rename", target, name]
+            task.arguments = arguments
             task.standardOutput = pipe
             task.standardError = pipe
             do { try task.run() } catch { return (false, error.localizedDescription) }
@@ -230,6 +257,17 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
         NSApp.activate(ignoringOtherApps: true)
         alert.window.initialFirstResponder = field
         return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
+    }
+
+    private func confirm(_ title: String, _ text: String, button: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Skip")
+        alert.addButton(withTitle: button)
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertSecondButtonReturn
     }
 
     private func alert(_ title: String, _ text: String) {
@@ -320,10 +358,12 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
             if alert.runModal() == .alertSecondButtonReturn { Task { await undo(entry) } }
             return
         }
-        notify("Card renamed \(entry.new)", "\(entry.old) is now \(entry.new)", undoID: entry.id)
+        notify("Card renamed \(entry.new)", "\(entry.old) is now \(entry.new). Eject and reinsert it before offloading.",
+               undoID: entry.id)
     }
 
     private func notify(_ title: String, _ body: String, undoID: String? = nil) {
+        guard notificationsAllowed else { alert(title, body); return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body

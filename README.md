@@ -16,12 +16,23 @@ Only cards still carrying a default name (UNTITLED, NO NAME, NONAME, DJI, editab
 - **Rename cards automatically**: on/off switch. The icon is filled when on.
 - **Rename cards now**: rename the cards already mounted.
 - **Recent renames**: Undo button while the card is mounted.
-- **Settings**: default card names, ask for a name when there is no reel ID, open at login, show icon in menu bar.
+- **Settings**: default card names, ask for a name when there is no reel ID, eject the card after renaming, open at login, show icon in menu bar.
 - **Open log**: `~/Library/Logs/CardRename.log` (same format as `rename_card.sh`).
 
 The same panel opens in a window on first launch, and whenever the app is opened again from Applications. Useful when the menu bar icon is hidden: behind the notch on a full menu bar, switched off in System Settings > Menu Bar, or tucked away by Bartender or Ice.
 
 Each rename posts a notification with an **Undo** button (hover the banner, or set Card Rename to "Alerts" in System Settings > Notifications to keep the button visible). After an undo, the automation leaves that card alone until it is reformatted.
+
+The menu bar item is saved under the name `CardRename`, so menu bar managers (Ice, Bartender) list it as its own item. A manager may file it in its hidden section at first.
+
+## Eject and reinsert after a rename
+
+A renamed card should be ejected and inserted again before offloading:
+
+- Finder, Spotlight and offload apps (Silverstack, ShotPut Pro, Hedge...) may keep the old name or path of the card until it is mounted again.
+- Two volumes with the same name cannot share a mount point: if a card named `E003` is already mounted, macOS mounts the next `E003` as `E003 1`, and a copy can end up reading the wrong card. Card Rename warns before giving a card a name that is already mounted.
+
+With **Eject the card after renaming** on, the card is ejected right after the rename and the notification says *Card renamed E003 and ejected. Please remove it and insert it again.* Undo then becomes available in the menu once the card is back.
 
 ## Build
 
