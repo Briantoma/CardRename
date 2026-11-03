@@ -210,9 +210,7 @@ struct PanelView: View {
                     Text("Named with the Labroll window's next labroll and Cam ID; the card's clips are listed there once it is ready.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if engine.labrollForNoReel {
-                        CardSchemeSettings(store: .shared)
-                    }
+                    CardSchemeSettings(store: .shared, active: engine.labrollForNoReel)
                     Toggle("Eject the card after renaming", isOn: $engine.ejectAfterRename)
                     Text("""
                         After a rename, eject the card and insert it again before offloading. \
@@ -249,11 +247,19 @@ struct PanelView: View {
 /// Card name scheme, in the panel's Settings.
 struct CardSchemeSettings: View {
     @ObservedObject var store: LabrollStore
+    /// "Name cards without reel ID after the labroll" is on. Shown dimmed otherwise, never hidden.
+    var active = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            if !active {
+                Text("Used when \"Name cards without reel ID after the labroll\" is on.")
+                    .font(.caption).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             SchemeEditor(title: "Card names", scheme: $store.cardScheme, standard: .cardDefault,
                          forClips: false, values: store.exampleValues, compact: true)
+                .opacity(active ? 1 : 0.5)
             Text("Labels keep A-Z 0-9 _ -. When too long, YYYY becomes YY, then the date and the camera are left out; random characters stay.")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

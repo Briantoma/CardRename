@@ -20,7 +20,7 @@ Only cards still carrying a default name (UNTITLED, NO NAME, NONAME, DJI, editab
 - **Settings**: default card names, ask for a name when there is no reel ID, name cards without reel ID after the labroll (with the card naming scheme, below), eject the card after renaming, open at login, show icon in menu bar.
 - **Open log**: `~/Library/Logs/CardRename.log` (same format as `rename_card.sh`).
 
-The same panel opens in a window on first launch, and whenever the app is opened again from Applications. Useful when the menu bar icon is hidden: behind the notch on a full menu bar, switched off in System Settings > Menu Bar, or tucked away by Bartender or Ice. While this window or the Labroll window is open, Card Rename also shows in the Dock and the app switcher. The panel shows the version (e.g. `v1.4 (5)`).
+The same panel opens in a window on first launch, and whenever the app is opened again from Applications. Useful when the menu bar icon is hidden: behind the notch on a full menu bar, switched off in System Settings > Menu Bar, or tucked away by Bartender or Ice. While this window or the Labroll window is open, Card Rename also shows in the Dock and the app switcher. The panel shows the version (e.g. `v1.5 (6)`).
 
 Each rename posts a notification with an **Undo** button (hover the banner, or set Card Rename to "Alerts" in System Settings > Notifications to keep the button visible). After an undo, the automation leaves that card alone until it is reformatted.
 
@@ -52,7 +52,7 @@ A001C001_20261102_GOPRO.MP4  A001C002_20261102_GOPRO.MP4  A001C003_20261102_GOPR
 
 ### Naming scheme
 
-Clip and card names follow two templates: clips under **Clip naming scheme** in the Labroll window, cards in the panel's **Settings** (shown while "Name cards without reel ID after the labroll" is on).
+Clip and card names follow two templates: clips under **Clip naming scheme** in the Labroll window, cards in the panel's **Settings** (always shown, dimmed while "Name cards without reel ID after the labroll" is off).
 
 | Token | Gives | Example |
 | --- | --- | --- |
