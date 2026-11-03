@@ -3,6 +3,8 @@ import SwiftUI
 
 /// One piece of a name template: a token ({date:YYYYMMDD}) or text typed between tokens.
 /// A class, so a token keeps its identity while its menu changes it.
+/// Text being typed stays a plain String in the field (no representedObjectForEditing: returning a
+/// TemplatePiece there made AppKit throw during layout and crash the app); it becomes pieces in shouldAdd.
 final class TemplatePiece: NSObject {
     var raw: String
 
@@ -74,9 +76,16 @@ struct TemplateField: NSViewRepresentable {
         return field
     }
 
+    /// Only a change made outside the field (chip, Reset) is written back into it, after the current
+    /// SwiftUI update: setting objectValue during an update or while typing crashed AppKit's layout.
     func updateNSView(_ field: NSTokenField, context: Context) {
-        context.coordinator.parent = self
-        if Coordinator.joined(field.objectValue) != template {
+        let coordinator = context.coordinator
+        coordinator.parent = self
+        guard template != coordinator.published else { return }
+        coordinator.published = template
+        let template = template
+        DispatchQueue.main.async {
+            if field.currentEditor() != nil { field.window?.makeFirstResponder(nil) }
             field.objectValue = TemplatePiece.pieces(template)
         }
     }
@@ -84,8 +93,13 @@ struct TemplateField: NSViewRepresentable {
     final class Coordinator: NSObject, NSTokenFieldDelegate {
         var parent: TemplateField
         weak var field: NSTokenField?
+        /// Template as last sent to, or received from, the binding.
+        var published: String
 
-        init(_ parent: TemplateField) { self.parent = parent }
+        init(_ parent: TemplateField) {
+            self.parent = parent
+            published = parent.template
+        }
 
         /// Template text of the field's pieces, and of text still being typed.
         static func joined(_ value: Any?) -> String {
@@ -93,18 +107,24 @@ struct TemplateField: NSViewRepresentable {
             return items.map { ($0 as? TemplatePiece)?.raw ?? "\($0)" }.joined()
         }
 
+        /// Sent after the current event, outside AppKit's text and layout callbacks.
         private func publish() {
             guard let field else { return }
             let template = Self.joined(field.objectValue)
-            if parent.template != template { parent.template = template }
+            guard template != published else { return }
+            published = template
+            DispatchQueue.main.async { [parent] in parent.template = template }
         }
 
         func controlTextDidChange(_ notification: Notification) { publish() }
 
+        /// Typed {cam} becomes a token once editing ends; after the field has committed its own text.
         func controlTextDidEndEditing(_ notification: Notification) {
-            guard let field else { return }
-            field.objectValue = TemplatePiece.pieces(Self.joined(field.objectValue))
-            publish()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let field = self.field, field.currentEditor() == nil else { return }
+                field.objectValue = TemplatePiece.pieces(Self.joined(field.objectValue))
+                self.publish()
+            }
         }
 
         func tokenField(_ tokenField: NSTokenField, displayStringForRepresentedObject representedObject: Any) -> String? {
@@ -113,10 +133,6 @@ struct TemplateField: NSViewRepresentable {
 
         func tokenField(_ tokenField: NSTokenField, editingStringForRepresentedObject representedObject: Any) -> String? {
             (representedObject as? TemplatePiece)?.raw ?? "\(representedObject)"
-        }
-
-        func tokenField(_ tokenField: NSTokenField, representedObjectForEditing editingString: String) -> Any? {
-            TemplatePiece(editingString)
         }
 
         func tokenField(_ tokenField: NSTokenField, styleForRepresentedObject representedObject: Any) -> NSTokenField.TokenStyle {

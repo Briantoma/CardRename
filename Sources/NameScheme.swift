@@ -41,7 +41,10 @@ struct NameScheme: Codable, Equatable, Sendable {
         var rest = Substring(template)
         while let open = rest.firstIndex(of: "{") {
             if open > rest.startIndex { result.append(.literal(String(rest[..<open]))) }
-            guard let close = rest[open...].firstIndex(of: "}") else { break }
+            guard let close = rest[open...].firstIndex(of: "}") else {   // unclosed: the rest is text
+                rest = rest[open...]
+                break
+            }
             let inside = rest[rest.index(after: open)..<close]
             let parts = inside.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
             if let name = parts.first?.lowercased(), Self.fields.contains(name) {

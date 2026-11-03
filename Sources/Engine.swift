@@ -32,6 +32,7 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
     @Published var showMenuBarIcon: Bool { didSet { store.set(showMenuBarIcon, forKey: "showMenuBarIcon") } }
     @Published var ejectAfterRename: Bool { didSet { store.set(ejectAfterRename, forKey: "ejectAfterRename") } }
     @Published var labrollForNoReel: Bool { didSet { store.set(labrollForNoReel, forKey: "labrollForNoReel") } }
+    @Published var settingsOpen = false   // Settings section of the panel, menu bar and window alike
     @Published private(set) var recent: [RenameEntry] = []
     @Published private(set) var mountedNames = Set<String>()
     @Published private(set) var busy = false

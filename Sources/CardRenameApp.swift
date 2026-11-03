@@ -201,7 +201,7 @@ struct PanelView: View {
 
             Divider()
 
-            DisclosureGroup("Settings") {
+            DisclosureGroup("Settings", isExpanded: $engine.settingsOpen) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Default card names, comma separated").font(.caption).foregroundStyle(.secondary)
                     TextField("UNTITLED, NO NAME, DJI", text: $engine.defaultNames)

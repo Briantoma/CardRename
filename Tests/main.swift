@@ -156,6 +156,8 @@ expectEqual("scheme: original name and random",
 expectEqual("scheme: empty token takes its separator",
             NameScheme(template: "{cam}_{labroll}_{cam}_{clip:2}").clipName(.init(labroll: "A001", clip: 3), extension: ""), "A001_03")
 expectEqual("scheme: unknown token kept", NameScheme(template: "{labroll}{came}").unknownTokens, ["{came}"])
+expectEqual("scheme: unclosed brace kept once",
+            NameScheme(template: "{labroll}_{cam").tokens, [.field("labroll", param: nil), .literal("_"), .literal("{cam")])
 expectEqual("scheme: no slash in clip names",
             NameScheme(template: "{labroll}/{cam}:x").clipName(values, extension: "MP4"), "A001-GOPRO-x.MP4")
 expectEqual("scheme: empty template falls back",
