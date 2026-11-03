@@ -86,9 +86,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                   backing: .buffered, defer: false)
             window.title = "Card Rename"
             window.isReleasedWhenClosed = false
-            let content = NSHostingView(rootView: PanelView(engine: .shared, inWindow: true))
-            window.contentView = content
-            window.setContentSize(content.fittingSize)   // size first, so center() uses the real size
+            // The window follows the panel's size, Settings open or closed.
+            let content = NSHostingController(rootView: PanelView(engine: .shared, inWindow: true))
+            content.sizingOptions = .preferredContentSize
+            window.contentViewController = content
+            window.setContentSize(content.view.fittingSize)   // size first, so center() uses the real size
             window.center()
             self.window = window
         }
@@ -106,7 +108,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                   backing: .buffered, defer: false)
             window.title = "Labroll"
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: LabrollView(store: .shared))
+            // Never smaller than its content: opening the naming scheme grows the window.
+            let content = NSHostingController(rootView: LabrollView(store: .shared))
+            content.sizingOptions = .minSize
+            window.contentViewController = content
             window.setFrameAutosaveName("Labroll")
             if !window.setFrameUsingName("Labroll") { window.center() }
             labrollWindow = window
@@ -202,9 +207,12 @@ struct PanelView: View {
                     TextField("UNTITLED, NO NAME, DJI", text: $engine.defaultNames)
                     Toggle("Ask for a name when clips have no reel ID", isOn: $engine.askWhenNoReel)
                     Toggle("Name cards without reel ID after the labroll", isOn: $engine.labrollForNoReel)
-                    Text("A001_GOPRO from the Labroll window's next labroll, Cam ID and naming scheme; the card's clips are listed there once it is ready.")
+                    Text("Named with the Labroll window's next labroll and Cam ID; the card's clips are listed there once it is ready.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if engine.labrollForNoReel {
+                        CardSchemeSettings(store: .shared)
+                    }
                     Toggle("Eject the card after renaming", isOn: $engine.ejectAfterRename)
                     Text("""
                         After a rename, eject the card and insert it again before offloading. \
@@ -235,5 +243,22 @@ struct PanelView: View {
         }
         .padding(14)
         .frame(width: 340)
+    }
+}
+
+/// Card name scheme, in the panel's Settings.
+struct CardSchemeSettings: View {
+    @ObservedObject var store: LabrollStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            SchemeEditor(title: "Card names", scheme: $store.cardScheme, standard: .cardDefault,
+                         forClips: false, values: store.exampleValues, compact: true)
+            Text("Labels keep A-Z 0-9 _ -. When too long, YYYY becomes YY, then the date and the camera are left out; random characters stay.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.08)))
     }
 }
