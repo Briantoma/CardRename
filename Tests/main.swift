@@ -165,6 +165,9 @@ expectEqual("scheme: empty template falls back",
 let cardScheme = NameScheme(template: "{labroll}_{date:YYYYMMDD}_{cam}_{random:4}")
 expectEqual("scheme: card keeps random, 15 characters", cardScheme.cardName(values, maxLength: 15), "A001_GOPRO_X7K2")
 expectEqual("scheme: card keeps random, 11 characters", cardScheme.cardName(values, maxLength: 11), "A001_X7K2")
+expectEqual("scheme: reel card, default scheme",
+            NameScheme.cardDefault.cardName(.init(labroll: "D902", date: day), maxLength: 11), "D902_261102")
+expectEqual("scheme: reel card, {labroll} alone", NameScheme(template: "{labroll}").cardName(.init(labroll: "D902", date: day), maxLength: 11), "D902")
 expectEqual("scheme: card ISO date", NameScheme(template: "{date:YYYY-MM-DD}_{labroll}").cardName(values, maxLength: 27), "2026-11-02_A001")
 expectTrue("scheme: random characters", NameScheme.randomCharacters().count == 8
            && NameScheme.randomCharacters(100).allSatisfy { !"01OI".contains($0) })

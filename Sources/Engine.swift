@@ -28,10 +28,10 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
 
     @Published var enabled: Bool { didSet { store.set(enabled, forKey: "enabled") } }
     @Published var defaultNames: String { didSet { store.set(defaultNames, forKey: "defaultNames") } }
+    /// Cards without reel ID: true asks with the scheme's name filled in, false names them directly.
     @Published var askWhenNoReel: Bool { didSet { store.set(askWhenNoReel, forKey: "askWhenNoReel") } }
     @Published var showMenuBarIcon: Bool { didSet { store.set(showMenuBarIcon, forKey: "showMenuBarIcon") } }
     @Published var ejectAfterRename: Bool { didSet { store.set(ejectAfterRename, forKey: "ejectAfterRename") } }
-    @Published var labrollForNoReel: Bool { didSet { store.set(labrollForNoReel, forKey: "labrollForNoReel") } }
     @Published var settingsOpen = false   // Settings section of the panel, menu bar and window alike
     @Published private(set) var recent: [RenameEntry] = []
     @Published private(set) var mountedNames = Set<String>()
@@ -54,7 +54,6 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
         askWhenNoReel = store.object(forKey: "askWhenNoReel") as? Bool ?? true
         showMenuBarIcon = store.object(forKey: "showMenuBarIcon") as? Bool ?? true
         ejectAfterRename = store.object(forKey: "ejectAfterRename") as? Bool ?? false
-        labrollForNoReel = store.object(forKey: "labrollForNoReel") as? Bool ?? true
         super.init()
         loadLog()
         refreshMounted()
@@ -108,16 +107,19 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
 
         let maxLength = CardScan.maxLabelLength(fsType: info.fsType)
         let scheme = LabrollStore.shared.cardScheme
-        let needsClipDate = labrollForNoReel && scheme.dateSource == .recording && scheme.uses("date")
+        let needsClipDate = scheme.dateSource == .recording && scheme.uses("date")
         busy = true
         let (isCard, proposal, camera, oldestClip) = await Task.detached {
             let proposal = CardScan.analyze(root: volume, maxLength: maxLength)
             var camera = ""
             var oldestClip: Date?
-            if case .noReel = proposal {
+            switch proposal {
+            case .reel, .noReel:
                 let files = CardScan.mediaFiles(in: volume)
                 camera = CardScan.cameraTag(root: volume, files: files)
                 if needsClipDate { oldestClip = files.compactMap(Labroll.recordingDate).min() }
+            default:
+                break
             }
             return (proposal == .unreadable || CardScan.looksLikeCard(volume), proposal, camera, oldestClip)
         }.value
@@ -140,11 +142,16 @@ final class Engine: NSObject, ObservableObject, UNUserNotificationCenterDelegate
                   "\(reels.joined(separator: " "))\nNothing renamed. Check the card before offloading.")
             return
         case .reel(let reel):
-            newName = reel
+            // The card scheme with the reel ID as labroll: D902, D902_261103... No camera when only
+            // the generic CARD was found (ARRI, RED, Blackmagic cards).
+            let values = NameScheme.Values(labroll: reel, date: oldestClip ?? Date(), cam: camera == "CARD" ? "" : camera,
+                                           random: NameScheme.randomCharacters())
+            newName = scheme.cardName(values, maxLength: maxLength)
         case .noReel(var suggestion):
-            // A001_GOPRO: same labroll as the clips will get in the Labroll window
+            // A001_GOPRO: same labroll as the clips will get in the Labroll window.
+            // MODEL_YYMMDD only when the next labroll field is empty.
             let labroll = LabrollStore.shared.nextLabroll.trimmingCharacters(in: .whitespaces)
-            if labrollForNoReel && !labroll.isEmpty {
+            if !labroll.isEmpty {
                 let camID = LabrollStore.shared.camID.trimmingCharacters(in: .whitespaces)
                 let card = (labroll: labroll, camera: camID.isEmpty ? camera : camID)
                 let values = NameScheme.Values(labroll: card.labroll, date: oldestClip ?? Date(), cam: card.camera,

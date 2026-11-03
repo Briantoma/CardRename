@@ -1,13 +1,13 @@
 # Card Rename
 
-Menu bar app that renames camera cards after the reel ID found in their clip names, as soon as they are mounted.
+Menu bar app that renames camera cards after the reel ID found in their clip names, as soon as they are mounted. Every card name follows the card naming scheme (see Naming scheme); the examples use the default, `{labroll}_{date:YYYYMMDD}_{cam}`, on an exFAT card.
 
 | Card | Clips | New name |
 | --- | --- | --- |
-| Sony XDCAM, ARRI, Canon, DJI Ronin | `D902C001_260916JN.MXF` | `D902` |
-| RED | `A003_C001_0916AB_001.R3D` | `A003` |
-| Blackmagic | `A007_09161234_C001.braw` | `A007` |
-| No reel ID (Sony `C0001.MP4`, DJI, GoPro, Lumix, DCIM) | | Next labroll, e.g. `A001_GOPRO`, confirmed in a dialog (see Labroll) |
+| Sony XDCAM, ARRI, Canon, DJI Ronin | `D902C001_260916JN.MXF` | `D902_261103` (the reel ID is the labroll; `{labroll}` alone gives `D902`) |
+| RED | `A003_C001_0916AB_001.R3D` | `A003_261103` |
+| Blackmagic | `A007_09161234_C001.braw` | `A007_261103` |
+| No reel ID (Sony `C0001.MP4`, DJI, GoPro, Lumix, DCIM) | | Next labroll, e.g. `A001_GOPRO`, named directly or suggested in a dialog (see Labroll) |
 
 Only cards still carrying a default name (UNTITLED, NO NAME, NONAME, DJI, editable in Settings) are renamed. A card with more than one reel ID is never renamed, an alert says so. Names are cut to the file system limit (FAT32 and exFAT 11 characters, APFS 27).
 
@@ -17,10 +17,10 @@ Only cards still carrying a default name (UNTITLED, NO NAME, NONAME, DJI, editab
 - **Rename cards now**: rename the cards already mounted.
 - **Labroll…**: opens the Labroll window (below).
 - **Recent renames**: Clips (list the card in the Labroll window) and Undo buttons while the card is mounted.
-- **Settings**: default card names, ask for a name when there is no reel ID, name cards without reel ID after the labroll (with the card naming scheme, below), eject the card after renaming, open at login, show icon in menu bar.
+- **Settings**: default card names; cards without reel ID named automatically or asked with the name suggested; the card naming scheme (below); eject the card after renaming, open at login, show icon in menu bar.
 - **Open log**: `~/Library/Logs/CardRename.log` (same format as `rename_card.sh`).
 
-The same panel opens in a window on first launch, and whenever the app is opened again from Applications. Useful when the menu bar icon is hidden: behind the notch on a full menu bar, switched off in System Settings > Menu Bar, or tucked away by Bartender or Ice. While this window or the Labroll window is open, Card Rename also shows in the Dock and the app switcher. The panel shows the version (e.g. `v1.5 (6)`).
+The same panel opens in a window on first launch, and whenever the app is opened again from Applications. Useful when the menu bar icon is hidden: behind the notch on a full menu bar, switched off in System Settings > Menu Bar, or tucked away by Bartender or Ice. While this window or the Labroll window is open, Card Rename also shows in the Dock and the app switcher. The panel shows the version (e.g. `v1.6 (7)`).
 
 Each rename posts a notification with an **Undo** button (hover the banner, or set Card Rename to "Alerts" in System Settings > Notifications to keep the button visible). After an undo, the automation leaves that card alone until it is reformatted.
 
@@ -44,7 +44,7 @@ GX010001.MP4  GX020001.MP4  GX010002.MP4   (shooting order, GoPro chapters kept 
 A001C001_20261102_GOPRO.MP4  A001C002_20261102_GOPRO.MP4  A001C003_20261102_GOPRO.MP4
 ```
 
-- The card itself is named after the same labroll: `A001_20261102_GOPRO`, shortened to fit the label limit (`A001_261102_GOPRO`, then `A001_GOPRO`, then `A001`). The camera part is the Cam ID field, or the camera found on the card. The labroll counter then moves to `A002`. Turn this off in Settings to get the old `MODEL_YYMMDD` names.
+- The card itself is named after the same labroll: `A001_20261102_GOPRO`, shortened to fit the label limit (`A001_261102_GOPRO`, then `A001_GOPRO`, then `A001`). The camera part is the Cam ID field, or the camera found on the card. The labroll counter then moves to `A002`. With "Ask, name suggested" in Settings, a dialog shows the name first and lets you change it. With the Next labroll field empty, the old `MODEL_YYMMDD` name is used.
 - Once the card is ready (right after the rename, or when it is inserted again if it was ejected), its clips are listed in the **Labroll** window, with their names before and after. Nothing is copied or renamed until you click.
 - **Copy + rename**: clips are copied to the destination folder under their new names, each copy read back from disk and checked with xxHash64. A log `A001_YYYY-MM-DD_HHMMSS.log` (old name, new name, hash, Labroll Utility's format) is written next to them. Existing files are never overwritten; Cancel deletes the partial copy, and the same button continues later.
 - **Rename only, on the card**: clips are renamed in place. Camera indexes (Sony XML, GoPro LRF/THM) no longer match, so old and new names are kept in `~/Library/Logs/CardRename-clips.log`.
@@ -52,7 +52,7 @@ A001C001_20261102_GOPRO.MP4  A001C002_20261102_GOPRO.MP4  A001C003_20261102_GOPR
 
 ### Naming scheme
 
-Clip and card names follow two templates: clips under **Clip naming scheme** in the Labroll window, cards in the panel's **Settings** (always shown, dimmed while "Name cards without reel ID after the labroll" is off).
+Clip and card names follow two templates: clips under **Clip naming scheme** in the Labroll window, cards in the panel's **Settings**. The card scheme names every card: with a reel ID, `{labroll}` is the reel (D902) and the camera is left out unless one was recognised (Sony, DJI, GoPro...); without one, it is the next labroll.
 
 | Token | Gives | Example |
 | --- | --- | --- |

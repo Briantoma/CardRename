@@ -250,8 +250,11 @@ struct SchemeEditor: View {
         if forClips {
             return "GX010001.MP4  →  " + scheme.clipName(values, extension: "MP4")
         }
+        var reel = values
+        (reel.labroll, reel.cam) = ("D902", "")
         return "FAT32, exFAT  " + scheme.cardName(values, maxLength: 11)
             + "\nAPFS         " + scheme.cardName(values, maxLength: 27)
+            + "\nReel D902    " + scheme.cardName(reel, maxLength: 11)
     }
 
     private var warnings: [String] {
