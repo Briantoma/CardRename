@@ -8,6 +8,41 @@ struct CardRenameApp: App {
     // The menu bar item and the window are AppKit objects owned by AppDelegate.
     var body: some Scene {
         Settings { EmptyView() }
+            .commands {
+                CommandGroup(replacing: .appInfo) {
+                    Button("About Card Rename") { About.show() }
+                }
+            }
+    }
+}
+
+/// Standard About panel, with credits and links to both repositories.
+enum About {
+    static let repo = URL(string: "https://github.com/Briantoma/CardRename")!
+    static let labrollRepo = URL(string: "https://github.com/brixybrice/Labroll-Utility")!
+
+    @MainActor static func show() {
+        let credits = NSMutableAttributedString()
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        let base: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: style,
+        ]
+        func add(_ text: String, link: URL? = nil) {
+            var attributes = base
+            if let link { attributes[.link] = link }
+            credits.append(NSAttributedString(string: text, attributes: attributes))
+        }
+
+        add("By Thomas\n")
+        add("github.com/Briantoma/CardRename", link: repo)
+        add("\n\nLabroll features based on Labroll Utility by Brix\n")
+        add("github.com/brixybrice/Labroll-Utility", link: labrollRepo)
+
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
     }
 }
 
@@ -240,6 +275,7 @@ struct PanelView: View {
 
             HStack {
                 Button("Open log") { engine.openLog() }
+                Button("About") { About.show() }
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }
             }

@@ -86,3 +86,11 @@ DRY_RUN=1 bash scripts/rename_card.sh /Volumes/UNTITLED   # show what would happ
 bash scripts/rename_card.sh                               # rename every card in /Volumes
 bash scripts/rename_card.sh undo                          # give the last renamed card its old name back
 ```
+
+## Credits
+
+Card Rename by Thomas: [github.com/Briantoma/CardRename](https://github.com/Briantoma/CardRename).
+
+The Labroll features are based on [Labroll Utility](https://github.com/brixybrice/Labroll-Utility) by Brix.
+
+Both appear in the app under **About** (panel footer, or Card Rename > About Card Rename while a window is open).
