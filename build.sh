@@ -4,6 +4,7 @@
 #   ./build.sh test      run the naming rule tests
 #   ./build.sh install   build, copy to /Applications and open it
 #   ./build.sh icon      redraw Resources/AppIcon.icns from Tools/make_icon.swift
+#   ./build.sh dmg       build, then build/CardRename.dmg (app + Applications shortcut) for a GitHub release
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -46,4 +47,14 @@ if [ "${1:-}" = "install" ]; then
   /usr/bin/ditto "$APP" "/Applications/Card Rename.app"
   open "/Applications/Card Rename.app"
   echo "Installed in /Applications"
+fi
+
+if [ "${1:-}" = "dmg" ]; then
+  /bin/rm -rf build/dmg build/CardRename.dmg
+  mkdir build/dmg
+  /usr/bin/ditto "$APP" "build/dmg/Card Rename.app"
+  ln -s /Applications build/dmg/Applications
+  hdiutil create -quiet -volname "Card Rename" -srcfolder build/dmg -fs HFS+ -format UDZO build/CardRename.dmg
+  /bin/rm -rf build/dmg
+  echo "Built build/CardRename.dmg (v$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Info.plist))"
 fi
