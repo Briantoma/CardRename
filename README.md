@@ -2,6 +2,8 @@
 
 **[Download Card Rename (DMG)](https://github.com/Briantoma/CardRename/releases/latest/download/CardRename.dmg)** · [all releases](https://github.com/Briantoma/CardRename/releases)
 
+The Labroll features are based on **[Labroll Utility](https://github.com/brixybrice/Labroll-Utility) by Brix** ([@brixybrice](https://github.com/brixybrice)).
+
 Open the DMG and drag Card Rename to Applications. Apple Silicon, macOS 14 or later. The app is not notarized: the first time, macOS refuses to open it; go to System Settings > Privacy & Security and click **Open Anyway**, then allow notifications and access to removable volumes.
 
 Menu bar app that renames camera cards after the reel ID found in their clip names, as soon as they are mounted. Every card name follows the card naming scheme (see Naming scheme); the examples use the default, `{labroll}_{date:YYYYMMDD}_{cam}`, on an exFAT card.
